@@ -262,3 +262,66 @@ async def test_refresh_token_lost_race_invalidates_family_and_issues_nothing():
     repo.commit.assert_awaited_once()
     repo.create.assert_not_awaited()
     mock_encode.assert_not_called()
+
+
+def _service_with_repo():
+    repo = cast(RefreshTokenRepository, create_autospec(RefreshTokenRepository))
+    return TokenService(repo), repo
+
+
+async def test_refresh_token_with_empty_payload_is_rejected():
+    """A refresh token that decodes to nothing must be rejected before touching the database."""
+    service, repo = _service_with_repo()
+
+    with patch.object(service, "decode_token", return_value=None):
+        with pytest.raises(InvalidToken):
+            await service.refresh_token("token")
+
+    repo.get_by_jti.assert_not_awaited()
+    repo.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("payload", [{"jti": "old-jti"}, {"sub": "1"}], ids=["no-sub", "no-jti"])
+async def test_refresh_token_without_sub_or_jti_is_rejected(payload):
+    """Both claims are needed to look the token up and rotate it."""
+    service, repo = _service_with_repo()
+
+    with patch.object(service, "decode_token", return_value=payload):
+        with pytest.raises(InvalidToken):
+            await service.refresh_token("token")
+
+    repo.get_by_jti.assert_not_awaited()
+    repo.commit.assert_not_awaited()
+
+
+async def test_refresh_token_unknown_jti_is_rejected_and_changes_nothing():
+    """A validly signed token that is not stored (e.g. wiped from the DB) must not be rotated."""
+    service, repo = _service_with_repo()
+    repo.get_by_jti.return_value = None
+
+    with patch.object(service, "decode_token", return_value={"sub": "1", "jti": "unknown-jti"}):
+        with pytest.raises(InvalidToken, match="Not found"):
+            await service.refresh_token("token")
+
+    repo.revoke_by_jti.assert_not_awaited()
+    repo.create.assert_not_awaited()
+    repo.commit.assert_not_awaited()
+
+
+async def test_revoke_token_by_jti_rejects_tokens_already_revoked_or_missing():
+    """Revoking twice (e.g. logging out twice) must report an invalid token instead of succeeding silently."""
+    service, repo = _service_with_repo()
+    repo.revoke_by_jti.return_value = False
+
+    with pytest.raises(InvalidToken, match="revoked"):
+        await service.revoke_token_by_jti("some-jti")
+
+    repo.revoke_by_jti.assert_awaited_once_with("some-jti")
+
+
+async def test_revoke_token_by_family_id_delegates_to_the_repository():
+    service, repo = _service_with_repo()
+
+    await service.revoke_token_by_family_id("family-1")
+
+    repo.revoke_by_family_id.assert_awaited_once_with("family-1")
