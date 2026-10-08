@@ -1,6 +1,9 @@
+# Observability services (profile "observability") only start when COMPOSE_PROFILES=observability,
+# which lives in the local .env. CI and any environment without it start just db + api.
 services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.111.0
+    profiles: [observability]
     restart: unless-stopped
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
@@ -12,6 +15,7 @@ services:
 
   tempo:
     image: grafana/tempo:2.6.1
+    profiles: [observability]
     restart: unless-stopped
     command: ["-config.file=/etc/tempo.yaml"]
     volumes:
@@ -20,6 +24,7 @@ services:
 
   loki:
     image: grafana/loki:3.2.0
+    profiles: [observability]
     restart: unless-stopped
     command: ["-config.file=/etc/loki/loki.yaml"]
     volumes:
@@ -28,6 +33,7 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.55.0
+    profiles: [observability]
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -39,6 +45,7 @@ services:
 
   grafana:
     image: grafana/grafana:11.3.0
+    profiles: [observability]
     restart: unless-stopped
     ports:
       - "${OBS_BIND:-127.0.0.1}:3000:3000"
@@ -64,7 +71,9 @@ services:
       retries: 10
 
   api:
-    build: .
+    build:
+      context: .
+      target: dev
     ports:
       - "8000:8000"
     volumes:
@@ -74,8 +83,8 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       DATABASE_URL_READER: ${DATABASE_URL_READER}
       DATABASE_URL_WRITER: ${DATABASE_URL_WRITER}
-      # The observability stack is included above, so the collector is always available locally.
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      # Empty disables telemetry. Local .env sets it to http://otel-collector:4317 next to COMPOSE_PROFILES.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       db:
         condition: service_healthy

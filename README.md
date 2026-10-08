@@ -1,10 +1,9 @@
-# Coverage
+# coika-auth_service
 
-![CI](https://github.com/acortescab/codename_rats-auth_service/actions/workflows/ci_tests.yml/badge.svg)
+[![CI](https://github.com/acortescab/coika-auth_service/actions/workflows/ci_tests.yml/badge.svg)](https://github.com/acortescab/coika-auth_service/actions/workflows/ci_tests.yml)
+[![codecov](https://codecov.io/gh/acortescab/coika-auth_service/branch/main/graph/badge.svg)](https://codecov.io/gh/acortescab/coika-auth_service)
 
-# codename_rats-auth_service
-
-Authentication and user session service for the codename_rats platform.
+Authentication and user session service for the Coika platform.
 
 This project provides a FastAPI-based identity service with guest login, user registration, JWT-based authentication, refresh-token rotation, account linking, and health checks. It is designed to run locally with Docker Compose and supports PostgreSQL-backed persistence through SQLAlchemy and Alembic.
 

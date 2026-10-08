@@ -1,7 +1,7 @@
 [project]
 name = "codename-rats-auth-service"
 version = "0.1.0"
-description = "Authentication and user session service for the codename_rats platform"
+description = "Authentication and user session service for the Coika platform"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
