@@ -117,6 +117,32 @@ def test_refresh_token_rotates_valid_token_and_reuses_family_id():
     repo.revoke_by_jti.assert_called_once_with("old-jti")
     assert repo.create.call_args.args[0] == "1"
     assert repo.create.call_args.args[4] == family_id
+    repo.commit.assert_called_once()
+
+
+def test_refresh_token_failure_after_revoke_commits_nothing():
+    """
+    Revoking the old token and creating the new one are one transaction: if creating fails, nothing
+    is committed, so the old token stays valid and the client can retry.
+    """
+    repo = cast(RefreshTokenRepository, create_autospec(RefreshTokenRepository))
+    service = TokenService(repo)
+
+    repo.get_by_jti.return_value = type(
+        "StoredToken", (), {"family_id": str(uuid.uuid4()), "revoked": False, "jti": "old-jti"}
+    )()
+    repo.create.side_effect = RuntimeError("db connection lost")
+
+    with patch("app.services.token_service.jwt.decode") as mock_decode, patch(
+        "app.services.token_service.jwt.encode", return_value="token"
+    ):
+        mock_decode.return_value = {"sub": "1", "jti": "old-jti", "type": "refresh"}
+
+        with pytest.raises(RuntimeError):
+            service.refresh_token("old_token")
+
+    repo.revoke_by_jti.assert_called_once_with("old-jti")
+    repo.commit.assert_not_called()
 
 
 def test_refresh_token_reuse_invalidates_family():
@@ -138,6 +164,8 @@ def test_refresh_token_reuse_invalidates_family():
             service.refresh_token("reused_token")
 
     repo.revoke_by_family_id.assert_called_once_with(family_id)
+    # The family revocation must be committed even though the request fails.
+    repo.commit.assert_called_once()
 
 @pytest.fixture
 def signing_service():
@@ -231,5 +259,6 @@ def test_refresh_token_lost_race_invalidates_family_and_issues_nothing():
             service.refresh_token("old_token")
 
     repo.revoke_by_family_id.assert_called_once_with(family_id)
+    repo.commit.assert_called_once()
     repo.create.assert_not_called()
     mock_encode.assert_not_called()

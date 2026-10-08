@@ -35,27 +35,33 @@ class AuthService:
         access_token = self.token_service.create_access_token(player.id)
         refresh_token = self.token_service.create_refresh_token(player.id)
 
-        return GuestLoginResponse(
-            id=player.id, 
+        response = GuestLoginResponse(
+            id=player.id,
             name=player.name,
-            access_token=access_token, 
+            access_token=access_token,
             refresh_token=refresh_token,
             device_secret=issued_secret
         )
-    
+
+        self._commit()
+        return response
+
     def register_user(self, email: EmailStr, name: str, password: str):
         """
         Registers a player
         """
         player = self.player_service.register_user(email, password, name)
 
-        return RegisterResponse(
+        response = RegisterResponse(
             id=player.id,
             email=player.email,
             name=player.name,
             created_at=player.created_at
         )
-    
+
+        self._commit()
+        return response
+
     def me(self, token: str):
         """
         Returns player from token
@@ -86,6 +92,7 @@ class AuthService:
             raise InvalidToken("Invalid token")
         
         self.token_service.revoke_token_by_jti(jti)
+        self._commit()
 
     def login(self, email: EmailStr, password: str):
         """
@@ -102,21 +109,22 @@ class AuthService:
             logger.info("password hash not valid")
             raise InvalidCredentials("Invalid login credentials")
         
-        self.token_service.revoke_token_by_player_id(player.id)
-        
         access_token = self.token_service.create_access_token(player.id)
         refresh_token = self.token_service.create_refresh_token(player.id)
 
         self.player_service.update_last_login(player.id)
 
-        return LoginResponse(
+        response = LoginResponse(
             id=player.id,
             name=player.name,
             email=player.email,
-            access_token=access_token, 
+            access_token=access_token,
             refresh_token=refresh_token
         )
-    
+
+        self._commit()
+        return response
+
     def link_account(self, email: EmailStr, name: str, password: str, token: str):
         """
         Links a guest-type account to email+password + rename of the username
@@ -137,14 +145,25 @@ class AuthService:
             raise InvalidRegistration("Invalid registration")
         
         self.token_service.revoke_token_by_player_id(player.id)
-        
-        return RegisterResponse(
+
+        response = RegisterResponse(
             id=player.id,
             email=player.email,
             name=player.name,
             created_at=player.created_at
         )
-    
+
+        # The upgrade and the token revocation commit together.
+        self._commit()
+        return response
+
+    def _commit(self):
+        """
+        Commits the unit of work of the current flow. PlayerService and TokenService share the same
+        writer session, so committing through either one commits everything.
+        """
+        self.token_service.commit()
+
     def get_player_by_token(self, token: str):
         """
         Returns player from token

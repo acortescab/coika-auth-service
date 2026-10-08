@@ -54,6 +54,7 @@ def test_guest_login_success():
     assert result.access_token == "access_token_mock"
     assert result.refresh_token == "refresh_token_mock"
     assert result.device_secret == "issued_secret"
+    token_service.commit.assert_called_once()
 
 def test_guest_login_empty_device_id_raises_error():
     """
@@ -135,6 +136,7 @@ def test_logout_refresh_token():
     # Assert
     token_service.decode_token.assert_called_once_with(credentials, "refresh")
     token_service.revoke_token_by_jti.assert_called_once_with("token_123")
+    token_service.commit.assert_called_once()
 
 def test_me_invalid_token():
     """
@@ -271,6 +273,8 @@ def test_link_account_success():
         assert isinstance(result, RegisterResponse)
         player_service.get_player_by_email.assert_called_once_with("test@example.com")
         player_service.link_account.assert_called_once()
+        token_service.revoke_token_by_player_id.assert_called_once_with(mock_player_new.id)
+        token_service.commit.assert_called_once()
     
 
 def test_link_account_email_already_exists():
