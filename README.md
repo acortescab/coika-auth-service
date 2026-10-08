@@ -16,7 +16,7 @@ This project provides a FastAPI-based identity service with guest login, user re
 - SQLAlchemy
 - Alembic
 - Pydantic + Pydantic Settings
-- JWT via python-jose
+- JWT via PyJWT
 - bcrypt
 - Docker / Docker Compose
 - pytest
@@ -105,7 +105,7 @@ Before running the project locally, make sure you have:
 
 - Docker and Docker Compose
 - Python 3.12+
-- pip
+- uv
 - Access to a local PostgreSQL instance or use the included Docker service
 
 ## Local Development

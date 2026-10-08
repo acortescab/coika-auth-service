@@ -7,6 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # Ensure logs are shown in real time (important for Docker logs)
 ENV PYTHONUNBUFFERED=1
 
+# Keep uv virtual environment outside /app to avoid being shadowed by bind mounts.
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
 # Set the working directory inside the container
 WORKDIR /app
 
@@ -16,11 +20,14 @@ RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only requirements first to leverage Docker layer caching
-COPY requirements.txt .
+# Install uv for dependency sync from pyproject + lockfile
+RUN pip install --no-cache-dir uv
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy project dependency metadata first to leverage Docker layer caching
+COPY pyproject.toml uv.lock* ./
+
+# Install runtime + dev dependencies (tests and lint run inside this image)
+RUN uv sync --frozen --group dev --no-install-project
 
 # Copy the rest of the application code into the container
 COPY . .
