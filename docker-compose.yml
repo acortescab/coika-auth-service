@@ -1,6 +1,3 @@
-include:
-  - docker-compose.observability.yml
-
 services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.111.0
