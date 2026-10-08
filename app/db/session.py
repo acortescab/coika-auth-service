@@ -1,52 +1,39 @@
 import os
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import declarative_base
 
-print("DATABASE_URL_WRITER =", os.getenv("DATABASE_URL_WRITER"))
+
+def _async_url(url: str) -> str:
+    return url.replace("postgresql://", "postgresql+psycopg://", 1)
 
 # Set up database engines and session makers for reader and writer connections
-engine_writer = create_engine(os.getenv("DATABASE_URL_WRITER"), pool_pre_ping=True)
-engine_reader = create_engine( os.getenv("DATABASE_URL_READER"), pool_pre_ping=True)
+engine_writer = create_async_engine(_async_url(os.getenv("DATABASE_URL_WRITER")), pool_pre_ping=True)
+engine_reader = create_async_engine(_async_url(os.getenv("DATABASE_URL_READER")), pool_pre_ping=True)
 
 # Create session makers for both reader and writer engines
-SessionLocalWriter = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine_writer
-)
-
+SessionLocalWriter = async_sessionmaker(engine_writer, expire_on_commit=False)
 # Session maker for reader engine
-SessionLocalReader = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine_reader
-)
+SessionLocalReader = async_sessionmaker(engine_reader, expire_on_commit=False)
 
 # Base class for declarative models
 Base = declarative_base()
 
-def get_write_db():
+async def get_write_db():
     """
     Dependency function to get a database session for writing operations. 
     This function is used in FastAPI routes to provide a database session that is properly closed after the request is processed.
     Yields: Session: A SQLAlchemy session for database operations.
     """
-    db = SessionLocalWriter()
-    try:
-        yield db
-    finally:
-        db.close()
+    async with SessionLocalWriter() as session:
+        yield session
 
 
-def get_read_db():
+async def get_read_db():
     """
     Dependency function to get a database session for reading operations. 
     This function is used in FastAPI routes to provide a database session that is properly closed after the request is processed.
     Yields: Session: A SQLAlchemy session for database operations.
     """
-    db = SessionLocalReader()
-    try:
-        yield db
-    finally:
-        db.close()
+    async with SessionLocalReader() as session:
+        yield session

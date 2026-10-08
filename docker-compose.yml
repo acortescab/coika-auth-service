@@ -1,4 +1,61 @@
+# Observability services (profile "observability") only start when COMPOSE_PROFILES=observability,
+# which lives in the local .env. CI and any environment without it start just db + api.
 services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    profiles: [observability]
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "${OBS_BIND:-127.0.0.1}:4317:4317"   # OTLP gRPC
+      - "${OBS_BIND:-127.0.0.1}:4318:4318"   # OTLP HTTP
+    depends_on: [tempo, loki, prometheus]
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    profiles: [observability]
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+
+  loki:
+    image: grafana/loki:3.2.0
+    profiles: [observability]
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./observability/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki_data:/loki
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    profiles: [observability]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver   # the Collector pushes metrics here
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    profiles: [observability]
+    restart: unless-stopped
+    ports:
+      - "${OBS_BIND:-127.0.0.1}:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - ./observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - grafana_data:/var/lib/grafana
+    depends_on: [tempo, loki, prometheus]
+
   db:
     image: postgres:15
     ports:
@@ -14,7 +71,9 @@ services:
       retries: 10
 
   api:
-    build: .
+    build:
+      context: .
+      target: dev
     ports:
       - "8000:8000"
     volumes:
@@ -24,6 +83,14 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       DATABASE_URL_READER: ${DATABASE_URL_READER}
       DATABASE_URL_WRITER: ${DATABASE_URL_WRITER}
+      # Empty disables telemetry. Local .env sets it to http://otel-collector:4317 next to COMPOSE_PROFILES.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       db:
         condition: service_healthy
+  
+volumes:
+  tempo_data:
+  loki_data:
+  prometheus_data:
+  grafana_data:

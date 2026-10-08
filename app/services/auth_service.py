@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from pydantic import EmailStr
@@ -24,16 +25,16 @@ class AuthService:
         self.player_service = player_service
         self.token_service = token_service
 
-    def guest_login(self, device_id: str, device_secret: str | None = None):
+    async def guest_login(self, device_id: str, device_secret: str | None = None):
         """
         Handles guest login by checking for an existing player with the given device ID or creating a new one if none exists.
         Generates access and refresh tokens for the player and returns an AuthResponse 
         containing the player's information and tokens.
         """
-        player, issued_secret = self.player_service.get_or_create_guest(device_id, device_secret)
+        player, issued_secret = await self.player_service.get_or_create_guest(device_id, device_secret)
 
         access_token = self.token_service.create_access_token(player.id)
-        refresh_token = self.token_service.create_refresh_token(player.id)
+        refresh_token = await self.token_service.create_refresh_token(player.id)
 
         response = GuestLoginResponse(
             id=player.id,
@@ -43,14 +44,16 @@ class AuthService:
             device_secret=issued_secret
         )
 
-        self._commit()
+        await self._commit()
+        logger.info("guest player logged in successfully", extra={"player_id":player.id, "device_id": device_id})
+
         return response
 
-    def register_user(self, email: EmailStr, name: str, password: str):
+    async def register_user(self, email: EmailStr, name: str, password: str):
         """
         Registers a player
         """
-        player = self.player_service.register_user(email, password, name)
+        player = await self.player_service.register_user(email, password, name)
 
         response = RegisterResponse(
             id=player.id,
@@ -59,14 +62,17 @@ class AuthService:
             created_at=player.created_at
         )
 
-        self._commit()
+        await self._commit()
+        logger.info("player registered in successfully", extra={"player_id":player.id})
+
         return response
 
-    def me(self, token: str):
+    async def me(self, token: str):
         """
         Returns player from token
         """
-        player = self.get_player_by_token(token)
+        player = await self.get_player_by_token(token)
+        logger.info("player fetch himself successfully", extra={"player_id":player.id})
 
         return MeResponse(
             id=player.id,
@@ -75,44 +81,50 @@ class AuthService:
             account_type=player.account_type
         )
     
-    def logout_player(self, token: str):
+    async def logout_player(self, token: str):
         """
         Logouts a player with valid token revoking it
         """
         payload = self.token_service.decode_token(token, "refresh")
 
         if not payload:
-            logger.info("payload decoding error for refresh token")
+            logger.warning("player tried to logout with an invalid refresh token")
             raise InvalidToken("Invalid token")
         
         jti = payload.get("jti")
 
         if not jti:
-            logger.info("payload jti error")
+            logger.warning("player tried to logout with a refresh token without jti")
             raise InvalidToken("Invalid token")
-        
-        self.token_service.revoke_token_by_jti(jti)
-        self._commit()
 
-    def login(self, email: EmailStr, password: str):
+        refresh_token = await self.token_service.get_token_by_jti(jti, include_revoked=True)
+        await self.token_service.revoke_token_by_jti(jti)
+        await self._commit()
+        logger.info("player logout successfully", 
+                    extra={"player_id":refresh_token.player_id, "jti": jti, "family_id": refresh_token.family_id})
+
+    async def login(self, email: EmailStr, password: str):
         """
         Logins a player and returns token
         """
-        player = self.player_service.get_player_by_email(email)
+        player = await self.player_service.get_player_by_email(email)
  
         if not player:
-            logger.info("valid email not found")
-            verify_password(password, DUMMY_PASSWORD_HASH)
+            # Pay the same bcrypt cost as a known email so response time does not reveal which emails exist
+            await asyncio.to_thread(verify_password, password, DUMMY_PASSWORD_HASH)
+            logger.warning("user cannot login because email not found", extra={"email": email})
             raise InvalidCredentials("Invalid login credentials")
         
-        if not verify_password(password, player.password):
-            logger.info("password hash not valid")
+        if not await asyncio.to_thread(verify_password, password, player.password):
+            logger.warning("user cannot login because password encrypt doesn't match", extra={"email": email})
             raise InvalidCredentials("Invalid login credentials")
         
         access_token = self.token_service.create_access_token(player.id)
-        refresh_token = self.token_service.create_refresh_token(player.id)
+        refresh_token = await self.token_service.create_refresh_token(player.id)
+        logger.info("user login both tokens are created", extra={"player_id":player.id})
 
-        self.player_service.update_last_login(player.id)
+        await self.player_service.update_last_login(player.id)
+        logger.info("user login last login update", extra={"player_id": player.id})
 
         response = LoginResponse(
             id=player.id,
@@ -122,29 +134,49 @@ class AuthService:
             refresh_token=refresh_token
         )
 
-        self._commit()
+        await self._commit()
+        logger.info("user login successfully", extra={"player_id":player.id})
+
         return response
 
-    def link_account(self, email: EmailStr, name: str, password: str, token: str):
+    async def link_account(self, email: EmailStr, name: str, password: str, token: str):
         """
         Links a guest-type account to email+password + rename of the username
         """
-        player = self.get_player_by_token(token)
-        
-        if not player or not player.device_id or player.account_type == PlayerAccountType.Registered:
-            raise InvalidRegistration("Invalid guest account")
-        
-        duplicate = self.player_service.get_player_by_email(email)
-
-        if duplicate:
-            raise InvalidRegistration("Invalid registration")
-        
-        player = self.player_service.link_account(player.id, email, password, name)
+        player = await self.get_player_by_token(token)
 
         if not player:
+            logger.warning("user tried to link account with unvalid token", extra={"email": email, "player_name": name})
+            raise InvalidRegistration("Invalid guest account")
+        
+        if not player.device_id:
+            logger.warning("user tried to link account with unvalid device", 
+                           extra={"email": email, "player_name": name, "device_id":player.device_id })
+            raise InvalidRegistration("Invalid guest account")
+
+        if player.account_type == PlayerAccountType.Registered:
+            logger.warning("user tried to link account which is already linked", 
+                           extra={"email": email, "player_name": name, "account_type":player.account_type})
+            raise InvalidRegistration("Invalid guest account")
+        
+        duplicate = await self.player_service.get_player_by_email(email)
+
+        if duplicate:
+            logger.warning("user tried to link account with email that is already used",
+                           extra={"email": email, "player_name": name})
             raise InvalidRegistration("Invalid registration")
         
-        self.token_service.revoke_token_by_player_id(player.id)
+        player = await self.player_service.link_account(player.id, email, password, name)
+
+        if not player:
+            logger.warning("user tried to link account but the guest register is optimist-locked",
+                           extra={"email": email, "player_name": name})
+            raise InvalidRegistration("Invalid registration")
+        
+        await self.token_service.revoke_token_by_player_id(player.id)
+        logger.info("link account previous refresh tokens are revoked",
+                    extra={"player_id":player.id, "email": email, "player_name": name}
+        )
 
         response = RegisterResponse(
             id=player.id,
@@ -153,39 +185,38 @@ class AuthService:
             created_at=player.created_at
         )
 
-        # The upgrade and the token revocation commit together.
-        self._commit()
+        await self._commit()
+        logger.info("link account successfully", extra={"player_id":player.id, "email": email, "player_name": name})
+
         return response
 
-    def _commit(self):
+    async def _commit(self):
         """
         Commits the unit of work of the current flow. PlayerService and TokenService share the same
         writer session, so committing through either one commits everything.
         """
-        self.token_service.commit()
+        await self.token_service.commit()
 
-    def get_player_by_token(self, token: str):
+    async def get_player_by_token(self, token: str):
         """
         Returns player from token
         """
         payload = self.token_service.decode_token(token, "access")
 
         if not payload:
-            logger.info("payload decoding error for access token")
+            logger.warning("access token is not valid")
             raise InvalidToken("Invalid token")
         
         sub = payload.get("sub")
 
         if not sub:
-            logger.info("payload sub error")
+            logger.warning("access token has not valid player_id")
             raise InvalidToken("Invalid token")
 
-        player = self.player_service.get_player_by_id(sub)
-
-        logger.info(f"sub value is {sub}")
+        player = await self.player_service.get_player_by_id(sub)
 
         if not player:
-            logger.info(f"no player found for sub {sub}")
+            logger.warning("player not found for access token sub", extra={"sub": sub})
             raise InvalidToken("Invalid token")
         
         return player

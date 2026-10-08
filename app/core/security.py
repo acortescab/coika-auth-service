@@ -5,7 +5,9 @@ from enum import Enum
 
 import bcrypt
 from fastapi.security import HTTPBearer
+from opentelemetry import trace
 
+tracer = trace.get_tracer(__name__)
 
 class JWTAlgorithm(str, Enum):
     """
@@ -21,13 +23,16 @@ def hash_password(password: str) -> str:
     """
     Creates an encrypted hash for password
     """
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    # bcrypt is CPU-bound and not covered by auto-instrumentation, so it needs its own span to show up in traces
+    with tracer.start_as_current_span("bcrypt.hash_password"):
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Verifies is the plain password matchs with the hashed one
     """
-    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+    with tracer.start_as_current_span("bcrypt.verify_password"):
+        return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
 
 # Verified against when a login email is unknown so response time does not reveal which emails exist
 DUMMY_PASSWORD_HASH = hash_password("dummy-password-for-timing")

@@ -38,7 +38,7 @@ def test_create_access_token_returns_token():
 
         assert token == "access_token"
 
-def test_create_refresh_token_saves_to_repository():
+async def test_create_refresh_token_saves_to_repository():
     """
     Tests that create_refresh_token:
     - generates a JWT token
@@ -54,11 +54,11 @@ def test_create_refresh_token_saves_to_repository():
         mock_encode.return_value = "refresh_token"
 
         # Act
-        token = service.create_refresh_token(1)
+        token = await service.create_refresh_token(1)
 
         # Assert
         mock_encode.assert_called_once()
-        repo.create.assert_called_once()
+        repo.create.assert_awaited_once()
 
         args = repo.create.call_args.args
         assert args[0] == 1
@@ -92,7 +92,7 @@ def test_decode_token_returns_payload():
         assert result == fake_payload
 
 
-def test_refresh_token_rotates_valid_token_and_reuses_family_id():
+async def test_refresh_token_rotates_valid_token_and_reuses_family_id():
     """A valid refresh token rotates and keeps the same family."""
     repo = cast(RefreshTokenRepository, create_autospec(RefreshTokenRepository))
     service = TokenService(repo)
@@ -110,17 +110,17 @@ def test_refresh_token_rotates_valid_token_and_reuses_family_id():
     ):
         mock_decode.return_value = {"sub": "1", "jti": "old-jti", "type": "refresh"}
 
-        result = service.refresh_token("old_token")
+        result = await service.refresh_token("old_token")
 
     assert result == {"access_token": "new_access_token", "refresh_token": "new_refresh_token"}
-    repo.get_by_jti.assert_called_once_with("old-jti", include_revoked=True, use_writer=True)
-    repo.revoke_by_jti.assert_called_once_with("old-jti")
+    repo.get_by_jti.assert_awaited_once_with("old-jti", include_revoked=True, use_writer=True)
+    repo.revoke_by_jti.assert_awaited_once_with("old-jti")
     assert repo.create.call_args.args[0] == "1"
     assert repo.create.call_args.args[4] == family_id
-    repo.commit.assert_called_once()
+    repo.commit.assert_awaited_once()
 
 
-def test_refresh_token_failure_after_revoke_commits_nothing():
+async def test_refresh_token_failure_after_revoke_commits_nothing():
     """
     Revoking the old token and creating the new one are one transaction: if creating fails, nothing
     is committed, so the old token stays valid and the client can retry.
@@ -139,13 +139,13 @@ def test_refresh_token_failure_after_revoke_commits_nothing():
         mock_decode.return_value = {"sub": "1", "jti": "old-jti", "type": "refresh"}
 
         with pytest.raises(RuntimeError):
-            service.refresh_token("old_token")
+            await service.refresh_token("old_token")
 
-    repo.revoke_by_jti.assert_called_once_with("old-jti")
-    repo.commit.assert_not_called()
+    repo.revoke_by_jti.assert_awaited_once_with("old-jti")
+    repo.commit.assert_not_awaited()
 
 
-def test_refresh_token_reuse_invalidates_family():
+async def test_refresh_token_reuse_invalidates_family():
     """A rotated refresh token cannot be reused; it invalidates the entire family."""
     repo = cast(RefreshTokenRepository, create_autospec(RefreshTokenRepository))
     service = TokenService(repo)
@@ -161,11 +161,11 @@ def test_refresh_token_reuse_invalidates_family():
         mock_decode.return_value = {"sub": "1", "jti": "old-jti", "type": "refresh"}
 
         with pytest.raises(InvalidToken, match="family"):
-            service.refresh_token("reused_token")
+            await service.refresh_token("reused_token")
 
-    repo.revoke_by_family_id.assert_called_once_with(family_id)
+    repo.revoke_by_family_id.assert_awaited_once_with(family_id)
     # The family revocation must be committed even though the request fails.
-    repo.commit.assert_called_once()
+    repo.commit.assert_awaited_once()
 
 @pytest.fixture
 def signing_service():
@@ -219,12 +219,12 @@ def test_decode_token_garbage_raises_invalid_token(signing_service):
         signing_service.decode_token("not-a-jwt")
 
 
-def test_decode_token_rejects_wrong_token_type(signing_service):
+async def test_decode_token_rejects_wrong_token_type(signing_service):
     """
     A refresh token must not be accepted where an access token is required, and vice versa.
     """
     access = signing_service.create_access_token(1)
-    refresh = signing_service.create_refresh_token(1)
+    refresh = await signing_service.create_refresh_token(1)
 
     assert signing_service.decode_token(access, "access")["sub"] == "1"
     assert signing_service.decode_token(refresh, "refresh")["type"] == "refresh"
@@ -236,7 +236,7 @@ def test_decode_token_rejects_wrong_token_type(signing_service):
         signing_service.decode_token(access, "refresh")
 
 
-def test_refresh_token_lost_race_invalidates_family_and_issues_nothing():
+async def test_refresh_token_lost_race_invalidates_family_and_issues_nothing():
     """
     If another request already claimed the token (conditional revoke updates 0 rows), this request is
     treated as reuse: the family is revoked and no new token is created.
@@ -256,9 +256,72 @@ def test_refresh_token_lost_race_invalidates_family_and_issues_nothing():
         mock_decode.return_value = {"sub": "1", "jti": "old-jti", "type": "refresh"}
 
         with pytest.raises(InvalidToken, match="family"):
-            service.refresh_token("old_token")
+            await service.refresh_token("old_token")
 
-    repo.revoke_by_family_id.assert_called_once_with(family_id)
-    repo.commit.assert_called_once()
-    repo.create.assert_not_called()
+    repo.revoke_by_family_id.assert_awaited_once_with(family_id)
+    repo.commit.assert_awaited_once()
+    repo.create.assert_not_awaited()
     mock_encode.assert_not_called()
+
+
+def _service_with_repo():
+    repo = cast(RefreshTokenRepository, create_autospec(RefreshTokenRepository))
+    return TokenService(repo), repo
+
+
+async def test_refresh_token_with_empty_payload_is_rejected():
+    """A refresh token that decodes to nothing must be rejected before touching the database."""
+    service, repo = _service_with_repo()
+
+    with patch.object(service, "decode_token", return_value=None):
+        with pytest.raises(InvalidToken):
+            await service.refresh_token("token")
+
+    repo.get_by_jti.assert_not_awaited()
+    repo.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("payload", [{"jti": "old-jti"}, {"sub": "1"}], ids=["no-sub", "no-jti"])
+async def test_refresh_token_without_sub_or_jti_is_rejected(payload):
+    """Both claims are needed to look the token up and rotate it."""
+    service, repo = _service_with_repo()
+
+    with patch.object(service, "decode_token", return_value=payload):
+        with pytest.raises(InvalidToken):
+            await service.refresh_token("token")
+
+    repo.get_by_jti.assert_not_awaited()
+    repo.commit.assert_not_awaited()
+
+
+async def test_refresh_token_unknown_jti_is_rejected_and_changes_nothing():
+    """A validly signed token that is not stored (e.g. wiped from the DB) must not be rotated."""
+    service, repo = _service_with_repo()
+    repo.get_by_jti.return_value = None
+
+    with patch.object(service, "decode_token", return_value={"sub": "1", "jti": "unknown-jti"}):
+        with pytest.raises(InvalidToken, match="Not found"):
+            await service.refresh_token("token")
+
+    repo.revoke_by_jti.assert_not_awaited()
+    repo.create.assert_not_awaited()
+    repo.commit.assert_not_awaited()
+
+
+async def test_revoke_token_by_jti_rejects_tokens_already_revoked_or_missing():
+    """Revoking twice (e.g. logging out twice) must report an invalid token instead of succeeding silently."""
+    service, repo = _service_with_repo()
+    repo.revoke_by_jti.return_value = False
+
+    with pytest.raises(InvalidToken, match="revoked"):
+        await service.revoke_token_by_jti("some-jti")
+
+    repo.revoke_by_jti.assert_awaited_once_with("some-jti")
+
+
+async def test_revoke_token_by_family_id_delegates_to_the_repository():
+    service, repo = _service_with_repo()
+
+    await service.revoke_token_by_family_id("family-1")
+
+    repo.revoke_by_family_id.assert_awaited_once_with("family-1")
