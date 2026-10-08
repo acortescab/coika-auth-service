@@ -60,7 +60,7 @@ flowchart LR
 
 ## Overview
 
-This service is a FastAPI authentication backend for the codename_rats platform. It handles guest login, user registration, JWT access/refresh token creation, account linking, and logout flows.
+This service is a FastAPI authentication backend for the Coika platform. It handles guest login, user registration, JWT access/refresh token creation, account linking, and logout flows.
 
 ## Layers
 
