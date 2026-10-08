@@ -3,8 +3,6 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-print("DATABASE_URL_WRITER =", os.getenv("DATABASE_URL_WRITER"))
-
 # Set up database engines and session makers for reader and writer connections
 engine_writer = create_engine(os.getenv("DATABASE_URL_WRITER"), pool_pre_ping=True)
 engine_reader = create_engine( os.getenv("DATABASE_URL_READER"), pool_pre_ping=True)
