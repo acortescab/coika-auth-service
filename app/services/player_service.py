@@ -1,9 +1,11 @@
+import logging
 from uuid import uuid4
 
 from app.core.exceptions.auth import InvalidCredentials, InvalidRegistration
 from app.core.security import generate_device_secret, hash_device_secret, verify_device_secret
 from app.repositories.player_repository import PlayerRepository
 
+logger = logging.getLogger(__name__)
 
 class PlayerService:
     """
@@ -30,20 +32,28 @@ class PlayerService:
             player = self.repo.create_guest(
                 device_id=device_id, name=name, device_secret_hash=hash_device_secret(secret)
             )
+            logger.info("new guest player created", extra={"player_name": name, "player_id": player.id, "device_id": device_id})
             return player, secret
 
         if player.device_secret_hash is None:
             # Guest created before device secrets existed: the first login claims one. The conditional
             # update means only one concurrent claim wins.
             secret = generate_device_secret()
+            logger.info("legacy guest without device secret, claiming one",
+                        extra={"player_id": player.id, "device_id": device_id})
 
             if not self.repo.set_device_secret_if_unset(player.id, hash_device_secret(secret)):
+                logger.warning("device secret claim lost to a concurrent request",
+                               extra={"player_id": player.id, "device_id": device_id})
                 raise InvalidCredentials("Invalid device credentials")
 
             self.update_last_login(player.id)
+            logger.info("legacy guest claimed a device secret", extra={"player_id": player.id})
             return player, secret
 
         if not device_secret or not verify_device_secret(device_secret, player.device_secret_hash):
+            logger.warning("player tried create or get a guest account with an invalid device secret",
+                          extra={"player_id": player.id})
             raise InvalidCredentials("Invalid device credentials")
 
         self.update_last_login(player.id)
@@ -56,6 +66,7 @@ class PlayerService:
         player = self.repo.get_by_email(email)
 
         if player:
+            logger.warning("registration rejected because email is already in use", extra={"email": email})
             raise InvalidRegistration("Email is already in use")
         
         return self.repo.create_user(email, name, password)

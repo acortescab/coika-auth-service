@@ -9,21 +9,11 @@ from slowapi.extension import _rate_limit_exceeded_handler
 
 from app.api.v0.routes import auth, health
 from app.core.config import get_settings
+from app.core.logging import setup_logging
 from app.core.rate_limit import limiter
+from app.core.telemetry import setup_telemetry
 
-# Loggins configuration
-logging.root.handlers = []
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-
-logging.getLogger("uvicorn").setLevel(logging.INFO)
-logging.getLogger("uvicorn.access").setLevel(logging.INFO)
-logging.getLogger("uvicorn.error").setLevel(logging.INFO)
-
+setup_logging(get_settings().LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
@@ -36,7 +26,7 @@ async def lifespan(app: FastAPI):
     try:
         validate_settings(get_settings())
     except RuntimeError as e:
-        logger.error(f"Error validating settings: {e}")
+        logger.critical("settings validation failed, shutting down", extra={"error": str(e)})
         sys.exit(1)
         
     yield 
@@ -57,6 +47,7 @@ def validate_settings(settings):
 app = FastAPI(lifespan=lifespan)
 app.include_router(health.router, prefix="/v0")
 app.include_router(auth.router, prefix="/v0")
+setup_telemetry(app, get_settings())
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 

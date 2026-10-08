@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -8,6 +9,7 @@ from app.core.config import get_settings
 from app.core.exceptions.auth import InvalidToken
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 
+logger = logging.getLogger(__name__)
 
 class TokenService:
     """
@@ -43,22 +45,28 @@ class TokenService:
         token = self.decode_token(refresh_token, "refresh")
 
         if not token:
+            logger.warning("refresh rejected, token payload is empty")
             raise InvalidToken("Invalid token")
-        
+
         player_id = token.get("sub")
         jti = token.get("jti")
 
         if not player_id or not jti:
+            logger.warning("refresh rejected, token without sub or jti",
+                           extra={"player_id": player_id, "jti": jti})
             raise InvalidToken("Invalid token")
 
         # Read from the primary: a replica could still show a token as active after it was rotated.
         stored = self.get_token_by_jti(jti, include_revoked=True, use_writer=True)
 
         if not stored:
+            logger.warning("refresh rejected, token not found", extra={"player_id": player_id, "jti": jti})
             raise InvalidToken("Not found or invalid token")
 
         # If the token was already revoked, invalidate the entire family and reject the request.
         if stored.revoked:
+            logger.warning("refresh token reuse detected, token already revoked",
+                           extra={"player_id": player_id, "jti": jti, "family_id": stored.family_id})
             self._invalidate_family(stored)
 
         # Claim the token with a conditional UPDATE (revoked = false -> true) BEFORE issuing new ones.
@@ -66,6 +74,8 @@ class TokenService:
         revoked = self.repo.revoke_by_jti(jti)
         if not revoked:
             # Another request already rotated this token; treat this request as reuse.
+            logger.warning("refresh token reuse detected, concurrent rotation lost",
+                           extra={"player_id": player_id, "jti": jti, "family_id": stored.family_id})
             self._invalidate_family(stored)
 
         family_id = stored.family_id or str(uuid.uuid4())
@@ -76,6 +86,8 @@ class TokenService:
         # Revoking the old token and storing the new one commit together: if anything above fails,
         # nothing is persisted and the client can retry with the old token.
         self.repo.commit()
+        logger.info("refresh token rotated",
+                    extra={"player_id": player_id, "old_jti": jti, "family_id": family_id})
 
         return {
             "access_token": access_token,
@@ -134,10 +146,13 @@ class TokenService:
                 algorithms=[self.settings.ALGORITHM],
                 options={"require": ["exp", "iat", "sub"]},
             )
-        except jwt.PyJWTError:
+        except jwt.PyJWTError as e:
+            logger.warning("token decode failed", extra={"reason": type(e).__name__, "token_type": token_type})
             raise InvalidToken("Invalid token")
 
         if token_type and payload.get("type") != token_type:
+            logger.warning("token type mismatch",
+                           extra={"expected": token_type, "received": payload.get("type"), "sub": payload.get("sub")})
             raise InvalidToken("Invalid token")
 
         return payload
@@ -162,6 +177,7 @@ class TokenService:
         revoked = self.repo.revoke_by_jti(jti)
 
         if not revoked:
+            logger.warning("revoke rejected, token already revoked or not found", extra={"jti": jti})
             raise InvalidToken("Invalid or revoked token")
         
     def revoke_token_by_player_id(self, player_id: UUID | str):

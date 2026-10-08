@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.refresh_token import RefreshToken
 
-logger = logging.getLogger("__name__")
+logger = logging.getLogger(__name__)
 
 class RefreshTokenRepository:
     """
@@ -60,7 +60,8 @@ class RefreshTokenRepository:
         When include_revoked is True, it also returns revoked tokens to detect reuse.
         When use_writer is True the primary is queried, so replica lag cannot hide a recent revocation.
         """
-        logger.info(f"fetch token request with jti: {jti}, include_revoked={include_revoked}")
+        logger.debug("fetch refresh token by jti",
+                     extra={"jti": jti, "include_revoked": include_revoked, "use_writer": use_writer})
 
         db = self.write_db if use_writer else self.read_db
         query = db.query(RefreshToken).filter(RefreshToken.jti == jti)
@@ -74,14 +75,13 @@ class RefreshTokenRepository:
         """
         Revokes a token by jti
         """
-        logger.info(f"revoke token request with jti: {jti}")
-
         rows = self.write_db.query(RefreshToken).filter(
             RefreshToken.jti == jti,
             ~RefreshToken.revoked
         ).update(
             {"revoked": True}
         )
+        logger.debug("revoke refresh token by jti", extra={"jti": jti, "rows": rows})
 
         return rows > 0
 
@@ -89,14 +89,13 @@ class RefreshTokenRepository:
         """
         Revokes all active tokens in a family.
         """
-        logger.info(f"revoke token family request with family id: {family_id}")
-
         rows = self.write_db.query(RefreshToken).filter(
             RefreshToken.family_id == family_id,
             ~RefreshToken.revoked
         ).update(
             {"revoked": True}
         )
+        logger.info("revoke refresh token family", extra={"family_id": family_id, "rows": rows})
 
         return rows > 0
     
@@ -104,13 +103,12 @@ class RefreshTokenRepository:
         """
         Revokes a token by player id
         """
-        logger.info(f"revoke token request with player id: {player_id}")
-
         rows = self.write_db.query(RefreshToken).filter(
             RefreshToken.player_id == player_id,
             ~RefreshToken.revoked
         ).update(
             {"revoked": True}
         )
+        logger.info("revoke refresh tokens by player", extra={"player_id": str(player_id), "rows": rows})
 
         return rows > 0

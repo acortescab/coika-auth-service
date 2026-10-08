@@ -24,6 +24,8 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       DATABASE_URL_READER: ${DATABASE_URL_READER}
       DATABASE_URL_WRITER: ${DATABASE_URL_WRITER}
+      # Optional: OTLP endpoint of the observability host (http://<host>:4317). Empty disables telemetry.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       db:
         condition: service_healthy

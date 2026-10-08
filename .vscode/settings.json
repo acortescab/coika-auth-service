@@ -4,6 +4,7 @@
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
+    "python.terminal.useEnvFile": true,
     "makefile.configureOnOpen": false,
     "python-envs.defaultEnvManager": "ms-python.python:system"
 }
