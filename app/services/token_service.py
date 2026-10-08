@@ -57,18 +57,25 @@ class TokenService:
         if not stored:
             raise InvalidToken("Not found or invalid token")
 
+        # If the token was already revoked, invalidate the entire family and reject the request.
         if stored.revoked:
             self._invalidate_family(stored)
 
         # Claim the token with a conditional UPDATE (revoked = false -> true) BEFORE issuing new ones.
         # Only one of several concurrent requests can win; the others are treated as reuse.
-        if not self.repo.revoke_by_jti(jti):
+        revoked = self.repo.revoke_by_jti(jti)
+        if not revoked:
+            # Another request already rotated this token; treat this request as reuse.
             self._invalidate_family(stored)
 
         family_id = stored.family_id or str(uuid.uuid4())
 
         access_token = self.create_access_token(player_id)
         new_refresh_token = self.create_refresh_token(player_id, family_id)
+
+        # Revoking the old token and storing the new one commit together: if anything above fails,
+        # nothing is persisted and the client can retry with the old token.
+        self.repo.commit()
 
         return {
             "access_token": access_token,
@@ -81,6 +88,8 @@ class TokenService:
         """
         if stored.family_id:
             self.repo.revoke_by_family_id(stored.family_id)
+        # Commit before raising: the request fails, so the revocation would otherwise be rolled back.
+        self.repo.commit()
         raise InvalidToken("Refresh token reused; family invalidated")
 
     def create_refresh_token(self, player_id: UUID | str, family_id: str | None = None) -> str:
@@ -139,6 +148,13 @@ class TokenService:
         """
         return self.repo.get_by_jti(jti, include_revoked=include_revoked, use_writer=use_writer)
     
+    def commit(self):
+        """
+        Commits the pending changes of the writer session, which is shared with PlayerService.
+        create_refresh_token and the revoke_* methods do not commit on their own.
+        """
+        self.repo.commit()
+
     def revoke_token_by_jti(self, jti: str):
         """
         Revokes token by jti
@@ -159,5 +175,10 @@ class TokenService:
         Revokes all tokens from a family.
         """
         self.repo.revoke_by_family_id(family_id)
+
+    def revoke_family_by_player_id(self, player_id: UUID | str):
+        """
+        Revokes all tokens from families associated with a player.
+        """
     
 

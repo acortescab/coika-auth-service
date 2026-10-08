@@ -36,8 +36,15 @@ class RefreshTokenRepository:
         )
 
         self.write_db.add(db_token)
-        self.write_db.commit()
+        self.write_db.flush()
         return db_token
+
+    def commit(self):
+        """
+        Commits the pending changes of the writer session.
+        Write methods only flush, so the caller decides which operations form one transaction.
+        """
+        self.write_db.commit()
     
     def get_by_player_id(self, player_id: UUID | str):
         """
@@ -76,7 +83,6 @@ class RefreshTokenRepository:
             {"revoked": True}
         )
 
-        self.write_db.commit()
         return rows > 0
 
     def revoke_by_family_id(self, family_id):
@@ -92,7 +98,6 @@ class RefreshTokenRepository:
             {"revoked": True}
         )
 
-        self.write_db.commit()
         return rows > 0
     
     def revoke_by_player_id(self, player_id: UUID | str):
@@ -108,5 +113,4 @@ class RefreshTokenRepository:
             {"revoked": True}
         )
 
-        self.write_db.commit()
         return rows > 0
