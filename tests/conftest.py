@@ -1,7 +1,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import engine_writer
 from app.main import app
@@ -26,47 +26,46 @@ async def async_client():
         yield client
 
 @pytest.fixture
-def db_connection():
+async def db_connection():
     """
     Creates a DB connection with rollback
     """
-    connection = engine_writer.connect()
-    transaction = connection.begin()
-
-    yield connection
-
-    transaction.rollback()
-    connection.close()
+    async with engine_writer.connect() as connection:
+        transaction = await connection.begin()
+        yield connection
+        await transaction.rollback()
 
 @pytest.fixture
-def db_session_writer(db_connection):
+async def db_session_writer(db_connection):
     """
     Creates the session writer
     """
-    return Session(bind=db_connection)
+    async with AsyncSession(bind=db_connection, join_transaction_mode="create_savepoint", expire_on_commit=False) as session:
+        yield session
 
 @pytest.fixture
-def db_session_reader(db_connection):
+async def db_session_reader(db_connection):
     """
     Creates the session reader
     """
-    return Session(bind=db_connection)
+    async with AsyncSession(bind=db_connection, join_transaction_mode="create_savepoint", expire_on_commit=False) as session:
+        yield session
 
 @pytest.fixture(autouse=True)
-def clean_db():
+async def clean_db():
     """
     Clear db for tests
     """
     yield
 
-    with engine_writer.connect() as conn:
-        conn.execute(text("""
+    async with engine_writer.connect() as conn:
+        await conn.execute(text("""
             TRUNCATE TABLE
                 refresh_tokens,
                 players
             RESTART IDENTITY CASCADE;
         """))
-        conn.commit()
+        await conn.commit()
 
 
 @pytest.fixture

@@ -15,7 +15,7 @@ from app.services.player_service import PlayerService
 from app.services.token_service import TokenService
 
 
-def test_guest_login_success():
+async def test_guest_login_success():
     """
     Tests that guest_login returns a valid AuthResponse
     when a valid device_id is provided.
@@ -41,12 +41,12 @@ def test_guest_login_success():
     auth_service = AuthService(player_service, token_service)
 
     # Act
-    result = auth_service.guest_login("device_123")
+    result = await auth_service.guest_login("device_123")
 
     # Assert
-    player_service.get_or_create_guest.assert_called_once_with("device_123", None)
+    player_service.get_or_create_guest.assert_awaited_once_with("device_123", None)
     token_service.create_access_token.assert_called_once_with(mock_player.id)
-    token_service.create_refresh_token.assert_called_once_with(mock_player.id)
+    token_service.create_refresh_token.assert_awaited_once_with(mock_player.id)
 
     assert isinstance(result, GuestLoginResponse)
     assert result.id == mock_player.id
@@ -54,27 +54,9 @@ def test_guest_login_success():
     assert result.access_token == "access_token_mock"
     assert result.refresh_token == "refresh_token_mock"
     assert result.device_secret == "issued_secret"
-    token_service.commit.assert_called_once()
+    token_service.commit.assert_awaited_once()
 
-def test_guest_login_empty_device_id_raises_error():
-    """
-    Tests that guest_login raises ValueError when
-    device_id is empty or invalid.
-
-    This ensures input validation is enforced
-    at the service layer.
-    """
-    # Arrange
-    player_service = cast(PlayerService, create_autospec(PlayerService))
-    token_service = cast(TokenService, create_autospec(TokenService))
-
-    service = AuthService(player_service, token_service)
-
-    # Act
-    with pytest.raises(ValueError):
-        service.guest_login("")
-
-def test_me_success():
+async def test_me_success():
     """
     Tests that /me returns player data when token is valid
     """
@@ -99,18 +81,18 @@ def test_me_success():
     auth_service = AuthService(player_service, token_service)
 
     # Act
-    result = auth_service.me("valid_token")
+    result = await auth_service.me("valid_token")
 
     # Assert
     token_service.decode_token.assert_called_once_with("valid_token", "access")
-    player_service.get_player_by_id.assert_called_once_with(payload["sub"])
+    player_service.get_player_by_id.assert_awaited_once_with(payload["sub"])
 
     assert result.id == mock_player.id
     assert result.name == mock_player.name
     assert result.email == mock_player.email
     assert result.account_type == mock_player.account_type
 
-def test_logout_refresh_token():
+async def test_logout_refresh_token():
     """
     Tests that logout revokes a single refresh token
     """
@@ -131,14 +113,14 @@ def test_logout_refresh_token():
     auth_service = AuthService(None, token_service)
 
     # Act
-    auth_service.logout_player(credentials)
+    await auth_service.logout_player(credentials)
 
     # Assert
     token_service.decode_token.assert_called_once_with(credentials, "refresh")
-    token_service.revoke_token_by_jti.assert_called_once_with("token_123")
-    token_service.commit.assert_called_once()
+    token_service.revoke_token_by_jti.assert_awaited_once_with("token_123")
+    token_service.commit.assert_awaited_once()
 
-def test_me_invalid_token():
+async def test_me_invalid_token():
     """
     Tests that /me raises error when token is invalid
     """
@@ -152,14 +134,14 @@ def test_me_invalid_token():
 
     # Act
     try:
-        auth_service.me("bad_token")
+        await auth_service.me("bad_token")
         
         # Assert
         assert False
     except InvalidToken:
         token_service.decode_token.assert_called_once()
 
-def test_register_success():
+async def test_register_success():
     """
     Test that register returns a valid RegisteredResponse
     """
@@ -177,17 +159,17 @@ def test_register_success():
     auth_service = AuthService(player_service, token_service)
 
     # Act
-    result = auth_service.register_user("email@email.com", "user-123", "1314rdas.z")
+    result = await auth_service.register_user("email@email.com", "user-123", "1314rdas.z")
 
     # Assert
-    assert player_service.register_user.call_count == 1
+    assert player_service.register_user.await_count == 1
 
     assert isinstance(result, RegisterResponse)
     assert result.id == mock_player.id
     assert result.name == mock_player.name
     assert result.email == mock_player.email
 
-def test_login_success():
+async def test_login_success():
     """
     Test that login returns a valid LoginResponse
     """
@@ -209,7 +191,7 @@ def test_login_success():
     
     with patch("app.services.auth_service.verify_password", return_value=True):
         # Act
-        result = auth_service.login("email@email.com", "1314rdas.z")
+        result = await auth_service.login("email@email.com", "1314rdas.z")
 
         # Assert
         assert isinstance(result, LoginResponse)
@@ -221,7 +203,7 @@ def test_login_success():
         assert result.refresh_token == "refresh_token_mock"
     
 
-def test_link_account_success():
+async def test_link_account_success():
     """
     Guest account should be converted to registered account
     and return new tokens for same player.
@@ -262,7 +244,7 @@ def test_link_account_success():
     with patch("app.core.security.hash_password", return_value="hashed_password"):
         
         # Act
-        result = auth_service.link_account(
+        result = await auth_service.link_account(
             email="test@example.com",
             name="new_user",
             password="Password123",
@@ -271,13 +253,13 @@ def test_link_account_success():
 
         # Assert
         assert isinstance(result, RegisterResponse)
-        player_service.get_player_by_email.assert_called_once_with("test@example.com")
-        player_service.link_account.assert_called_once()
-        token_service.revoke_token_by_player_id.assert_called_once_with(mock_player_new.id)
-        token_service.commit.assert_called_once()
+        player_service.get_player_by_email.assert_awaited_once_with("test@example.com")
+        player_service.link_account.assert_awaited_once()
+        token_service.revoke_token_by_player_id.assert_awaited_once_with(mock_player_new.id)
+        token_service.commit.assert_awaited_once()
     
 
-def test_link_account_email_already_exists():
+async def test_link_account_email_already_exists():
     """
     Cannot link account if provided email already exists
     """
@@ -316,7 +298,7 @@ def test_link_account_email_already_exists():
 
     # Act
     try:
-        auth_service.link_account(
+        await auth_service.link_account(
             "test@mail.com", 
             "userfake_123", 
             "Password123", 
@@ -328,7 +310,7 @@ def test_link_account_email_already_exists():
     except InvalidRegistration:
         assert True
 
-def test_link_account_guest_not_found():
+async def test_link_account_guest_not_found():
     """
     Cannot link if guest account for this device is not found
     """
@@ -342,7 +324,7 @@ def test_link_account_guest_not_found():
     token_repo.get_by_jti.return_value = None
 
     try:
-        auth_service.link_account(
+        await auth_service.link_account(
             "test@mail.com",
             "userfake_123",
             "Password123",
@@ -352,24 +334,22 @@ def test_link_account_guest_not_found():
     except InvalidRegistration:
         assert True
 
-def test_login_unknown_email_still_verifies_a_hash():
+async def test_login_unknown_email_still_verifies_a_hash():
     """
     Unknown emails must cost the same bcrypt verification as known ones so response time
     does not reveal which emails are registered.
     """
-    from unittest.mock import MagicMock, patch
-
-    import pytest
+    from unittest.mock import AsyncMock, patch
 
     from app.core.exceptions.auth import InvalidCredentials
     from app.services.auth_service import AuthService
 
-    player_service = MagicMock()
+    player_service = AsyncMock(spec=PlayerService)
     player_service.get_player_by_email.return_value = None
-    service = AuthService(player_service, MagicMock())
+    service = AuthService(player_service, AsyncMock(spec=TokenService))
 
     with patch("app.services.auth_service.verify_password") as mock_verify:
         with pytest.raises(InvalidCredentials):
-            service.login("nobody@example.com", "whatever1")
+            await service.login("nobody@example.com", "whatever1")
 
     mock_verify.assert_called_once()

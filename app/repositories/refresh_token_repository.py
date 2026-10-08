@@ -1,9 +1,11 @@
 import hashlib
 import logging
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy import CursorResult, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.refresh_token import RefreshToken
 
@@ -13,14 +15,14 @@ class RefreshTokenRepository:
     """
     Repository for managing refresh tokens.
     """
-    def __init__(self, write_db: Session, read_db: Session):
+    def __init__(self, write_db: AsyncSession, read_db: AsyncSession):
         """
         Initializes the RefreshTokenRepository with separate read and write database sessions.
         """
         self.write_db = write_db
         self.read_db = read_db
 
-    def create(self, player_id, jti, token, expires_at: datetime, family_id=None):
+    async def create(self, player_id, jti, token, expires_at: datetime, family_id=None):
         """
         Creates a new refresh token
         """
@@ -36,25 +38,19 @@ class RefreshTokenRepository:
         )
 
         self.write_db.add(db_token)
-        self.write_db.flush()
+        await self.write_db.flush()
         return db_token
-
-    def commit(self):
-        """
-        Commits the pending changes of the writer session.
-        Write methods only flush, so the caller decides which operations form one transaction.
-        """
-        self.write_db.commit()
     
-    def get_by_player_id(self, player_id: UUID | str):
+    async def get_by_player_id(self, player_id: UUID | str):
         """
         Gets a token by player id
         """
-        return self.read_db.query(RefreshToken).filter(
-            RefreshToken.player_id == player_id
-        ).first()
+        query = select(RefreshToken).where(RefreshToken.player_id == player_id)
+        result = await self.read_db.execute(query)
+
+        return result.scalars().first()
     
-    def get_by_jti(self, jti: str, include_revoked: bool = False, use_writer: bool = False):
+    async def get_by_jti(self, jti: str, include_revoked: bool = False, use_writer: bool = False):
         """
         Gets a token by jti.
         When include_revoked is True, it also returns revoked tokens to detect reuse.
@@ -64,51 +60,51 @@ class RefreshTokenRepository:
                      extra={"jti": jti, "include_revoked": include_revoked, "use_writer": use_writer})
 
         db = self.write_db if use_writer else self.read_db
-        query = db.query(RefreshToken).filter(RefreshToken.jti == jti)
+        if include_revoked:
+            query = select(RefreshToken).where(RefreshToken.jti == jti)
+        else:
+            query = select(RefreshToken).where(RefreshToken.jti == jti, ~RefreshToken.revoked)
 
-        if not include_revoked:
-            query = query.filter(~RefreshToken.revoked)
+        result = await db.execute(query)
+        return result.scalar_one_or_none()
 
-        return query.first()
-
-    def revoke_by_jti(self, jti: str):
+    async def revoke_by_jti(self, jti: str):
         """
         Revokes a token by jti
         """
-        rows = self.write_db.query(RefreshToken).filter(
-            RefreshToken.jti == jti,
-            ~RefreshToken.revoked
-        ).update(
-            {"revoked": True}
-        )
-        logger.debug("revoke refresh token by jti", extra={"jti": jti, "rows": rows})
+        query = update(RefreshToken).where(RefreshToken.jti == jti, ~RefreshToken.revoked).values(
+            revoked=True)
+        result = await self.write_db.execute(query)
 
-        return rows > 0
+        logger.debug("revoke refresh token by jti", extra={"jti": jti})
 
-    def revoke_by_family_id(self, family_id):
+        return cast(CursorResult, result).rowcount > 0
+
+    async def revoke_by_family_id(self, family_id):
         """
         Revokes all active tokens in a family.
         """
-        rows = self.write_db.query(RefreshToken).filter(
-            RefreshToken.family_id == family_id,
-            ~RefreshToken.revoked
-        ).update(
-            {"revoked": True}
-        )
-        logger.info("revoke refresh token family", extra={"family_id": family_id, "rows": rows})
+        query = update(RefreshToken).where(RefreshToken.family_id == family_id, ~RefreshToken.revoked).values(revoked=True)
+        result = await self.write_db.execute(query)
 
-        return rows > 0
+        logger.info("revoke refresh token family", extra={"family_id": family_id})
+
+        return cast(CursorResult, result).rowcount > 0
     
-    def revoke_by_player_id(self, player_id: UUID | str):
+    async def revoke_by_player_id(self, player_id: UUID | str):
         """
         Revokes a token by player id
         """
-        rows = self.write_db.query(RefreshToken).filter(
-            RefreshToken.player_id == player_id,
-            ~RefreshToken.revoked
-        ).update(
-            {"revoked": True}
-        )
-        logger.info("revoke refresh tokens by player", extra={"player_id": str(player_id), "rows": rows})
+        query = update(RefreshToken).where(RefreshToken.player_id == player_id, ~RefreshToken.revoked).values(revoked=True)
+        result = await self.write_db.execute(query)
 
-        return rows > 0
+        logger.info("revoke refresh tokens by player", extra={"player_id": str(player_id)})
+
+        return cast(CursorResult, result).rowcount > 0
+
+    async def commit(self):
+        """
+        Commits the pending changes of the writer session.
+        Write methods only flush, so the caller decides which operations form one transaction.
+        """
+        await self.write_db.commit()
