@@ -1,4 +1,5 @@
 import logging
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
@@ -13,8 +14,9 @@ logger = logging.getLogger("__name__")
 class PlayerRepository:
     """
     Repository class for managing player data in the database. 
-    This class provides methods for retrieving and creating player records, 
+    This class provides methods for retrieving and creating player records,
     as well as updating player information such as the last login timestamp.
+    Write methods only flush; the caller (service layer) decides when to commit.
     """
     
     def __init__(self, write_db: Session, read_db: Session):
@@ -54,7 +56,7 @@ class PlayerRepository:
         self.write_db.add(player)
 
         try:
-            self.write_db.commit()
+            self.write_db.flush()
         except IntegrityError:
             # concurrent first login for the same device_id
             self.write_db.rollback()
@@ -73,7 +75,6 @@ class PlayerRepository:
             Player.device_secret_hash.is_(None)
         ).update({"device_secret_hash": device_secret_hash})
 
-        self.write_db.commit()
         return rows > 0
     
     def create_user(self, email:str, name:str, password:str):
@@ -87,18 +88,21 @@ class PlayerRepository:
             account_type=PlayerAccountType.Registered
         )
 
-        self.write_db.add(player)
-        self._commit_registration()
+        with self._registration_conflict():
+            self.write_db.add(player)
+            self.write_db.flush()
+
         self.write_db.refresh(player)
         return player
 
-    def _commit_registration(self):
+    @contextmanager
+    def _registration_conflict(self):
         """
-        Commits a registration; a unique-constraint violation (e.g. a concurrent signup with the same
-        email) becomes an InvalidRegistration (409) instead of an unhandled 500.
+        Wraps a statement that writes a registration; a unique-constraint violation (e.g. a concurrent
+        signup with the same email) becomes an InvalidRegistration (409) instead of an unhandled 500.
         """
         try:
-            self.write_db.commit()
+            yield
         except IntegrityError:
             self.write_db.rollback()
             raise InvalidRegistration("Invalid registration")
@@ -107,15 +111,9 @@ class PlayerRepository:
         """
         Updates the last login timestamp for a player.
         """
-        player = self.write_db.query(Player).filter(
+        self.write_db.query(Player).filter(
             Player.id == id
-        ).first()
-
-        if player is None:
-            return
-
-        player.last_login = datetime.now(timezone.utc)
-        self.write_db.commit()
+        ).update({"last_login": datetime.now(timezone.utc)})
 
     def get_by_email(self, email:str):
         """
@@ -129,18 +127,23 @@ class PlayerRepository:
         """
         Upgrades a guest account to registered account
         """
-        player = self.write_db.query(Player).filter(
-            Player.id == id
-        ).first()
+        # The UPDATE runs right here, so the unique-email violation must be caught around it.
+        with self._registration_conflict():
+            rows = self.write_db.query(Player).filter(
+                Player.id == id,
+                Player.account_type == PlayerAccountType.Guest,
+                Player.device_id.isnot(None)
+            ).update({
+                "device_id": None,
+                "device_secret_hash": None,
+                "email": email,
+                "password": hash_password(password),
+                "name": name,
+                "account_type": PlayerAccountType.Registered,
+            })
 
-        player.device_id = None
-        player.device_secret_hash = None
-        player.email = email
-        player.password = hash_password(password)
-        player.name = name
-        player.account_type = PlayerAccountType.Registered
+        if rows == 0:
+            return None
 
-        self._commit_registration()
-        self.write_db.refresh(player)
-
-        return player
+        return self.write_db.query(Player).filter(Player.id == id).first()
+            
