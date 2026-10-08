@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str | None = None
     ALGORITHM: str = "RS256"
     ENV: str = "dev"
+    LOG_LEVEL: str = "DEBUG"
+    # Empty endpoint disables OpenTelemetry (e.g. prod until the observability host exists).
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = ""
+    OTEL_SERVICE_NAME: str = "auth-service"
 
     @property
     def is_prod(self):

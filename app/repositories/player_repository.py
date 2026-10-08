@@ -9,7 +9,7 @@ from app.core.exceptions.auth import InvalidCredentials, InvalidRegistration
 from app.core.security import hash_password
 from app.db.models.player import Player, PlayerAccountType
 
-logger = logging.getLogger("__name__")
+logger = logging.getLogger(__name__)
 
 class PlayerRepository:
     """
@@ -60,6 +60,8 @@ class PlayerRepository:
         except IntegrityError:
             # concurrent first login for the same device_id
             self.write_db.rollback()
+            logger.warning("guest creation conflict, concurrent first login for the same device",
+                           extra={"device_id": device_id})
             raise InvalidCredentials("Invalid device credentials")
 
         self.write_db.refresh(player)
@@ -105,6 +107,7 @@ class PlayerRepository:
             yield
         except IntegrityError:
             self.write_db.rollback()
+            logger.warning("registration conflict, unique constraint violated")
             raise InvalidRegistration("Invalid registration")
 
     def update_last_login(self, id):
@@ -127,7 +130,6 @@ class PlayerRepository:
         """
         Upgrades a guest account to registered account
         """
-        # The UPDATE runs right here, so the unique-email violation must be caught around it.
         with self._registration_conflict():
             rows = self.write_db.query(Player).filter(
                 Player.id == id,
@@ -143,6 +145,7 @@ class PlayerRepository:
             })
 
         if rows == 0:
+            logger.warning("guest upgrade matched no rows", extra={"player_id": str(id)})
             return None
 
         return self.write_db.query(Player).filter(Player.id == id).first()

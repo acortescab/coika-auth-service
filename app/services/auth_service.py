@@ -44,6 +44,8 @@ class AuthService:
         )
 
         self._commit()
+        logger.info("guest player logged in successfully", extra={"player_id":player.id, "device_id": device_id})
+
         return response
 
     def register_user(self, email: EmailStr, name: str, password: str):
@@ -60,6 +62,8 @@ class AuthService:
         )
 
         self._commit()
+        logger.info("player registered in successfully", extra={"player_id":player.id})
+
         return response
 
     def me(self, token: str):
@@ -67,6 +71,7 @@ class AuthService:
         Returns player from token
         """
         player = self.get_player_by_token(token)
+        logger.info("player fetch himself successfully", extra={"player_id":player.id})
 
         return MeResponse(
             id=player.id,
@@ -82,17 +87,20 @@ class AuthService:
         payload = self.token_service.decode_token(token, "refresh")
 
         if not payload:
-            logger.info("payload decoding error for refresh token")
+            logger.warning("player tried to logout with an invalid refresh token")
             raise InvalidToken("Invalid token")
         
         jti = payload.get("jti")
 
         if not jti:
-            logger.info("payload jti error")
+            logger.warning("player tried to logout with a refresh token without jti")
             raise InvalidToken("Invalid token")
-        
+
+        refresh_token = self.token_service.get_token_by_jti(jti, include_revoked=True)
         self.token_service.revoke_token_by_jti(jti)
         self._commit()
+        logger.info("player logout successfully", 
+                    extra={"player_id":refresh_token.player_id, "jti": jti, "family_id": refresh_token.family_id})
 
     def login(self, email: EmailStr, password: str):
         """
@@ -101,18 +109,21 @@ class AuthService:
         player = self.player_service.get_player_by_email(email)
  
         if not player:
-            logger.info("valid email not found")
+            # Pay the same bcrypt cost as a known email so response time does not reveal which emails exist
             verify_password(password, DUMMY_PASSWORD_HASH)
+            logger.warning("user cannot login because email not found", extra={"email": email})
             raise InvalidCredentials("Invalid login credentials")
         
         if not verify_password(password, player.password):
-            logger.info("password hash not valid")
+            logger.warning("user cannot login because password encrypt doesn't match", extra={"email": email})
             raise InvalidCredentials("Invalid login credentials")
         
         access_token = self.token_service.create_access_token(player.id)
         refresh_token = self.token_service.create_refresh_token(player.id)
+        logger.info("user login both tokens are created", extra={"player_id":player.id})
 
         self.player_service.update_last_login(player.id)
+        logger.info("user login last login update", extra={"player_id": player.id})
 
         response = LoginResponse(
             id=player.id,
@@ -123,6 +134,8 @@ class AuthService:
         )
 
         self._commit()
+        logger.info("user login successfully", extra={"player_id":player.id})
+
         return response
 
     def link_account(self, email: EmailStr, name: str, password: str, token: str):
@@ -130,21 +143,39 @@ class AuthService:
         Links a guest-type account to email+password + rename of the username
         """
         player = self.get_player_by_token(token)
+
+        if not player:
+            logger.warning("user tried to link account with unvalid token", extra={"email": email, "player_name": name})
+            raise InvalidRegistration("Invalid guest account")
         
-        if not player or not player.device_id or player.account_type == PlayerAccountType.Registered:
+        if not player.device_id:
+            logger.warning("user tried to link account with unvalid device", 
+                           extra={"email": email, "player_name": name, "device_id":player.device_id })
+            raise InvalidRegistration("Invalid guest account")
+
+        if player.account_type == PlayerAccountType.Registered:
+            logger.warning("user tried to link account which is already linked", 
+                           extra={"email": email, "player_name": name, "account_type":player.account_type})
             raise InvalidRegistration("Invalid guest account")
         
         duplicate = self.player_service.get_player_by_email(email)
 
         if duplicate:
+            logger.warning("user tried to link account with email that is already used",
+                           extra={"email": email, "player_name": name})
             raise InvalidRegistration("Invalid registration")
         
         player = self.player_service.link_account(player.id, email, password, name)
 
         if not player:
+            logger.warning("user tried to link account but the guest register is optimist-locked",
+                           extra={"email": email, "player_name": name})
             raise InvalidRegistration("Invalid registration")
         
         self.token_service.revoke_token_by_player_id(player.id)
+        logger.info("link account previous refresh tokens are revoked",
+                    extra={"player_id":player.id, "email": email, "player_name": name}
+        )
 
         response = RegisterResponse(
             id=player.id,
@@ -153,8 +184,9 @@ class AuthService:
             created_at=player.created_at
         )
 
-        # The upgrade and the token revocation commit together.
         self._commit()
+        logger.info("link account successfully", extra={"player_id":player.id, "email": email, "player_name": name})
+
         return response
 
     def _commit(self):
@@ -171,21 +203,19 @@ class AuthService:
         payload = self.token_service.decode_token(token, "access")
 
         if not payload:
-            logger.info("payload decoding error for access token")
+            logger.warning("access token is not valid")
             raise InvalidToken("Invalid token")
         
         sub = payload.get("sub")
 
         if not sub:
-            logger.info("payload sub error")
+            logger.warning("access token has not valid player_id")
             raise InvalidToken("Invalid token")
 
         player = self.player_service.get_player_by_id(sub)
 
-        logger.info(f"sub value is {sub}")
-
         if not player:
-            logger.info(f"no player found for sub {sub}")
+            logger.warning("player not found for access token sub", extra={"sub": sub})
             raise InvalidToken("Invalid token")
         
         return player
