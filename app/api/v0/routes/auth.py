@@ -30,79 +30,83 @@ PlayerServiceDep = Annotated[PlayerService, Depends(get_player_service)]
 
 @router.post("/guest-login", response_model=GuestLoginResponse)
 @limiter.limit("20/minute")
-def guest_login(request: Request, payload: GuestLoginRequest, service: AuthServiceDep):
+async def guest_login(request: Request, payload: GuestLoginRequest, service: AuthServiceDep):
     """
     Endpoint for guest login.
     """
     try:
-        return service.guest_login(payload.device_id, payload.device_secret)
+        
+        return await service.guest_login(payload.device_id, payload.device_secret)
     except InvalidCredentials as e:
         raise HTTPException(status_code=401, detail=str(e))
 
 @router.post("/refresh-token", response_model=RefreshTokenResponse)
 @limiter.limit("30/minute")
-def refresh_token(request: Request, payload: RefreshTokenRequest, service: TokenServiceDep):
+async def refresh_token(request: Request, payload: RefreshTokenRequest, service: TokenServiceDep):
     """
     Endpoint for refresh token.
     """
     try:
-        return service.refresh_token(payload.refresh_token)
+        return await service.refresh_token(payload.refresh_token)
     except InvalidToken as e:
         raise HTTPException(status_code=401, detail=str(e))
     
 @router.get("/me", response_model=MeResponse)
 # Requires access token as a header
-def me(token: Annotated[HTTPAuthorizationCredentials, Depends(oauth2_scheme)], service: AuthServiceDep):
+async def me(token: Annotated[HTTPAuthorizationCredentials, Depends(oauth2_scheme)], service: AuthServiceDep):
     """
     Endpoint for player recognition
     """
     try:
-        return service.me(token.credentials)
+        return await service.me(token.credentials)
     except InvalidToken as e:
         raise HTTPException(status_code=401, detail=str(e))
     
 @router.post("/logout")
 # Requires refresh token as a header
-def logout(token: Annotated[HTTPAuthorizationCredentials, Depends(oauth2_scheme)], service: AuthServiceDep):
+async def logout(token: Annotated[HTTPAuthorizationCredentials, Depends(oauth2_scheme)], service: AuthServiceDep):
     """
     Endpoint for player logout
     """
     try:
-        return service.logout_player(token.credentials)
+        return await service.logout_player(token.credentials)
     except InvalidToken as e:
         raise HTTPException(status_code=401, detail=str(e))
     
 @router.post("/register", response_model=RegisterResponse)
 @limiter.limit("10/minute")
-def register(request: Request, payload: RegisterRequest, service: AuthServiceDep):
+async def register(request: Request, payload: RegisterRequest, service: AuthServiceDep):
     """
     Endpoint for user register
     """
     try:
-        return service.register_user(payload.email, payload.name, payload.password)
+        return await service.register_user(payload.email, payload.name, payload.password)
     except InvalidRegistration as e:
         raise HTTPException(status_code=409, detail=str(e))
 
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("10/minute")
-def login(request: Request, payload: LoginRequest, service: AuthServiceDep):
+async def login(request: Request, payload: LoginRequest, service: AuthServiceDep):
     """
     Endpoint for login
     """
     try:
-        return service.login(payload.email, payload.password)
+        return await service.login(payload.email, payload.password)
     except InvalidCredentials as e:
         raise HTTPException(status_code=401, detail=str(e))
     
 @router.post("/link-account", response_model=RegisterResponse)
 @limiter.limit("10/minute")
-def link_account(request: Request, payload: RegisterRequest, token: Annotated[HTTPAuthorizationCredentials, Depends(oauth2_scheme)], 
-                 service: AuthServiceDep):
+async def link_account(
+    request: Request, 
+    payload: RegisterRequest, 
+    token: Annotated[HTTPAuthorizationCredentials, Depends(oauth2_scheme)], 
+    service: AuthServiceDep):
     """
     Endpoint for link account
     """
     try:
-        return service.link_account(payload.email, payload.name, payload.password, token.credentials)
+        return await service.link_account(payload.email, payload.name, payload.password, token.credentials)
     except InvalidToken as e:
         raise HTTPException(status_code=401, detail=str(e))
     except InvalidRegistration as e:

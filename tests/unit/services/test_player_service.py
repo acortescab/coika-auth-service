@@ -15,7 +15,7 @@ def _guest(secret_hash):
     return SimpleNamespace(id=uuid.uuid4(), name="guest-123", device_secret_hash=secret_hash)
 
 
-def test_get_or_create_guest_creates_new_player_and_issues_secret():
+async def test_get_or_create_guest_creates_new_player_and_issues_secret():
     """
     A new device gets a guest account and a freshly issued secret; only its hash is stored.
     """
@@ -24,7 +24,7 @@ def test_get_or_create_guest_creates_new_player_and_issues_secret():
     created = _guest(None)
     repo.create_guest.return_value = created
 
-    player, secret = PlayerService(repo).get_or_create_guest("device_999")
+    player, secret = await PlayerService(repo).get_or_create_guest("device_999")
 
     assert player == created
     assert secret and len(secret) >= 32
@@ -32,34 +32,34 @@ def test_get_or_create_guest_creates_new_player_and_issues_secret():
     assert kwargs["device_id"] == "device_999"
     assert kwargs["device_secret_hash"] == hash_device_secret(secret)
     assert kwargs["device_secret_hash"] != secret
-    repo.update_last_login.assert_not_called()
+    repo.update_last_login.assert_not_awaited()
 
 
-def test_get_or_create_guest_correct_secret_logs_in_without_issuing_new_one():
+async def test_get_or_create_guest_correct_secret_logs_in_without_issuing_new_one():
     repo = cast(PlayerRepository, create_autospec(PlayerRepository))
     existing = _guest(hash_device_secret("the-device-secret"))
     repo.get_by_device_id.return_value = existing
 
-    player, secret = PlayerService(repo).get_or_create_guest("device_123", "the-device-secret")
+    player, secret = await PlayerService(repo).get_or_create_guest("device_123", "the-device-secret")
 
     assert player == existing
     assert secret is None
-    repo.update_last_login.assert_called_once_with(existing.id)
-    repo.create_guest.assert_not_called()
+    repo.update_last_login.assert_awaited_once_with(existing.id)
+    repo.create_guest.assert_not_awaited()
 
 
 @pytest.mark.parametrize("provided", [None, "", "wrong-secret"])
-def test_get_or_create_guest_missing_or_wrong_secret_is_rejected(provided):
+async def test_get_or_create_guest_missing_or_wrong_secret_is_rejected(provided):
     repo = cast(PlayerRepository, create_autospec(PlayerRepository))
     repo.get_by_device_id.return_value = _guest(hash_device_secret("the-device-secret"))
 
     with pytest.raises(InvalidCredentials):
-        PlayerService(repo).get_or_create_guest("device_123", provided)
+        await PlayerService(repo).get_or_create_guest("device_123", provided)
 
-    repo.update_last_login.assert_not_called()
+    repo.update_last_login.assert_not_awaited()
 
 
-def test_get_or_create_guest_legacy_guest_claims_a_secret():
+async def test_get_or_create_guest_legacy_guest_claims_a_secret():
     """
     A guest created before secrets existed (no hash) gets one on its next login.
     """
@@ -68,15 +68,15 @@ def test_get_or_create_guest_legacy_guest_claims_a_secret():
     repo.get_by_device_id.return_value = legacy
     repo.set_device_secret_if_unset.return_value = True
 
-    player, secret = PlayerService(repo).get_or_create_guest("device_123")
+    player, secret = await PlayerService(repo).get_or_create_guest("device_123")
 
     assert player == legacy
     assert secret
-    repo.set_device_secret_if_unset.assert_called_once_with(legacy.id, hash_device_secret(secret))
-    repo.update_last_login.assert_called_once_with(legacy.id)
+    repo.set_device_secret_if_unset.assert_awaited_once_with(legacy.id, hash_device_secret(secret))
+    repo.update_last_login.assert_awaited_once_with(legacy.id)
 
 
-def test_get_or_create_guest_legacy_claim_lost_race_is_rejected():
+async def test_get_or_create_guest_legacy_claim_lost_race_is_rejected():
     """
     If another request claimed the secret first, this one must not get tokens.
     """
@@ -85,9 +85,9 @@ def test_get_or_create_guest_legacy_claim_lost_race_is_rejected():
     repo.set_device_secret_if_unset.return_value = False
 
     with pytest.raises(InvalidCredentials):
-        PlayerService(repo).get_or_create_guest("device_123")
+        await PlayerService(repo).get_or_create_guest("device_123")
 
-def test_generate_guest_name_format():
+async def test_generate_guest_name_format():
     """
     Tests that generate_guest_name returns a string
     with correct format: guest-xxxxxx

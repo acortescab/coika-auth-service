@@ -1,41 +1,41 @@
 from app.repositories.player_repository import PlayerRepository
 
 
-def test_player_repository_create_and_get(db_session_writer, db_session_reader):
+async def test_player_repository_create_and_get(db_session_writer, db_session_reader):
     """
     Unit test for creating a new guest-user.
     """
     repo = PlayerRepository(db_session_writer, db_session_reader)
 
-    created = repo.create_guest(
+    created = await repo.create_guest(
         device_id="device_123",
         name="guest-abc"
     )
 
-    player = repo.get_by_device_id("device_123")
+    player = await repo.get_by_device_id("device_123")
 
     assert player is not None
     assert player.id == created.id
     assert player.device_id == "device_123"
 
-def test_update_last_login(db_session_writer, db_session_reader):
+async def test_update_last_login(db_session_writer, db_session_reader):
     """
     Unit test for updating last login timestamp.
     """
     repo = PlayerRepository(db_session_writer, db_session_reader)
 
-    player = repo.create_guest(
+    player = await repo.create_guest(
         device_id="device_999",
         name="guest-test"
     )
 
-    repo.update_last_login(player.id)
+    await repo.update_last_login(player.id)
 
-    updated = repo.get_by_device_id("device_999")
+    updated = await repo.get_by_device_id("device_999")
 
     assert updated.last_login is not None
 
-def test_register_user(db_session_writer, db_session_reader):
+async def test_register_user(db_session_writer, db_session_reader):
     """
     Unit test creating a new registered-user
     """
@@ -43,20 +43,20 @@ def test_register_user(db_session_writer, db_session_reader):
     repo = PlayerRepository(db_session_writer, db_session_reader)
 
     # Act
-    created = repo.create_user(
+    created = await repo.create_user(
         email="email@email.com",
         name="registered_user",
         password="basd13.z112"
     )
 
-    player = repo.get_by_email("email@email.com")
+    player = await repo.get_by_email("email@email.com")
 
     # Assert
     assert player is not None
     assert player.account_type == "registered"
     assert player.id == created.id
 
-def test_upgrade_account(db_session_writer, db_session_reader):
+async def test_upgrade_account(db_session_writer, db_session_reader):
     """
     Unit test for upgrading from guest to registered
     """
@@ -64,19 +64,19 @@ def test_upgrade_account(db_session_writer, db_session_reader):
     repo = PlayerRepository(db_session_writer, db_session_reader)
     
     # Act
-    player = repo.create_guest(
+    player = await repo.create_guest(
         device_id="device_999",
         name="guest-test"
     )
 
-    repo.upgrade_guest(
+    await repo.upgrade_guest(
         id=player.id,
         email="email@email.com",
         password="basd13.z112",
         name="registered_user"
     )
 
-    player = repo.get_by_email("email@email.com")
+    player = await repo.get_by_email("email@email.com")
 
     # Arrange
     assert player is not None

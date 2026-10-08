@@ -37,7 +37,7 @@ class TokenService:
 
         return self.encode_token(payload)
     
-    def refresh_token(self, refresh_token: str):
+    async def refresh_token(self, refresh_token: str):
         """
         Create a new refresh token and marks previous as revoked.
         If a token from the same family is reused after rotation, revoke the whole family.
@@ -57,7 +57,7 @@ class TokenService:
             raise InvalidToken("Invalid token")
 
         # Read from the primary: a replica could still show a token as active after it was rotated.
-        stored = self.get_token_by_jti(jti, include_revoked=True, use_writer=True)
+        stored = await self.get_token_by_jti(jti, include_revoked=True, use_writer=True)
 
         if not stored:
             logger.warning("refresh rejected, token not found", extra={"player_id": player_id, "jti": jti})
@@ -67,25 +67,27 @@ class TokenService:
         if stored.revoked:
             logger.warning("refresh token reuse detected, token already revoked",
                            extra={"player_id": player_id, "jti": jti, "family_id": stored.family_id})
-            self._invalidate_family(stored)
+            await self._invalidate_family(stored)
+            raise InvalidToken("Refresh token reused; family invalidated")
 
         # Claim the token with a conditional UPDATE (revoked = false -> true) BEFORE issuing new ones.
         # Only one of several concurrent requests can win; the others are treated as reuse.
-        revoked = self.repo.revoke_by_jti(jti)
+        revoked = await self.repo.revoke_by_jti(jti)
         if not revoked:
             # Another request already rotated this token; treat this request as reuse.
             logger.warning("refresh token reuse detected, concurrent rotation lost",
                            extra={"player_id": player_id, "jti": jti, "family_id": stored.family_id})
-            self._invalidate_family(stored)
+            await self._invalidate_family(stored)
+            raise InvalidToken("Refresh token reused; family invalidated")
 
         family_id = stored.family_id or str(uuid.uuid4())
 
         access_token = self.create_access_token(player_id)
-        new_refresh_token = self.create_refresh_token(player_id, family_id)
+        new_refresh_token = await self.create_refresh_token(player_id, family_id)
 
         # Revoking the old token and storing the new one commit together: if anything above fails,
         # nothing is persisted and the client can retry with the old token.
-        self.repo.commit()
+        await self.repo.commit()
         logger.info("refresh token rotated",
                     extra={"player_id": player_id, "old_jti": jti, "family_id": family_id})
 
@@ -94,17 +96,16 @@ class TokenService:
             "refresh_token": new_refresh_token
         }
 
-    def _invalidate_family(self, stored):
+    async def _invalidate_family(self, stored):
         """
         Revokes every active token of the family of a reused refresh token and rejects the request.
         """
         if stored.family_id:
-            self.repo.revoke_by_family_id(stored.family_id)
+            await self.repo.revoke_by_family_id(stored.family_id)
         # Commit before raising: the request fails, so the revocation would otherwise be rolled back.
-        self.repo.commit()
-        raise InvalidToken("Refresh token reused; family invalidated")
+        await self.repo.commit()
 
-    def create_refresh_token(self, player_id: UUID | str, family_id: str | None = None) -> str:
+    async def create_refresh_token(self, player_id: UUID | str, family_id: str | None = None) -> str:
         """
         Creates a refresh token for the given player ID.
         Each refresh-token family shares the same family_id across rotations.
@@ -123,7 +124,7 @@ class TokenService:
         }
 
         token = self.encode_token(payload)
-        self.repo.create(player_id, jti, token, expires_at, family_id)
+        await self.repo.create(player_id, jti, token, expires_at, family_id)
 
         return token
 
@@ -157,44 +158,38 @@ class TokenService:
 
         return payload
     
-    def get_token_by_jti(self, jti: str, include_revoked: bool = False, use_writer: bool = False):
+    async def get_token_by_jti(self, jti: str, include_revoked: bool = False, use_writer: bool = False):
         """
         Get refresh token by jti.
         """
-        return self.repo.get_by_jti(jti, include_revoked=include_revoked, use_writer=use_writer)
+        return await self.repo.get_by_jti(jti, include_revoked=include_revoked, use_writer=use_writer)
     
-    def commit(self):
+    async def commit(self):
         """
         Commits the pending changes of the writer session, which is shared with PlayerService.
         create_refresh_token and the revoke_* methods do not commit on their own.
         """
-        self.repo.commit()
+        await self.repo.commit()
 
-    def revoke_token_by_jti(self, jti: str):
+    async def revoke_token_by_jti(self, jti: str):
         """
         Revokes token by jti
         """
-        revoked = self.repo.revoke_by_jti(jti)
+        revoked = await self.repo.revoke_by_jti(jti)
 
         if not revoked:
             logger.warning("revoke rejected, token already revoked or not found", extra={"jti": jti})
             raise InvalidToken("Invalid or revoked token")
         
-    def revoke_token_by_player_id(self, player_id: UUID | str):
+    async def revoke_token_by_player_id(self, player_id: UUID | str):
         """
         Revokes token by player_id
         """
-        self.repo.revoke_by_player_id(player_id)
+        await self.repo.revoke_by_player_id(player_id)
 
-    def revoke_token_by_family_id(self, family_id):
+    async def revoke_token_by_family_id(self, family_id):
         """
         Revokes all tokens from a family.
         """
-        self.repo.revoke_by_family_id(family_id)
-
-    def revoke_family_by_player_id(self, player_id: UUID | str):
-        """
-        Revokes all tokens from families associated with a player.
-        """
-    
+        await self.repo.revoke_by_family_id(family_id)
 

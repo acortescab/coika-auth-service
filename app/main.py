@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.core.rate_limit import limiter
 from app.core.telemetry import setup_telemetry
+from app.db.session import engine_reader, engine_writer
 
 setup_logging(get_settings().LOG_LEVEL)
 logger = logging.getLogger(__name__)
@@ -31,6 +32,9 @@ async def lifespan(app: FastAPI):
         
     yield 
     logger.info("Closing application resources...")
+    await engine_writer.dispose()
+    await engine_reader.dispose()
+    
 
 def validate_settings(settings):
     """

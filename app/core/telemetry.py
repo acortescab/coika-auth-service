@@ -64,6 +64,6 @@ def setup_telemetry(app: FastAPI, settings: Settings) -> None:
     FastAPIInstrumentor.instrument_app(app, excluded_urls="health")
     # skip_dep_check: the instrumentor declares support for sqlalchemy < 2.1 but we run 2.1.x; without this it
     # refuses to instrument and no SQL spans are produced. Remove once the instrumentor supports 2.1.
-    SQLAlchemyInstrumentor().instrument(engines=[engine_writer, engine_reader], skip_dep_check=True)
+    SQLAlchemyInstrumentor().instrument(engines=[engine_writer.sync_engine, engine_reader.sync_engine], skip_dep_check=True)
 
     logger.info("telemetry enabled", extra={"otlp_endpoint": endpoint, "service": settings.OTEL_SERVICE_NAME})

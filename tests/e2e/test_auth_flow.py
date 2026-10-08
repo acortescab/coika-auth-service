@@ -1,10 +1,10 @@
-import pytest
+
+from sqlalchemy import select
 
 from app.db.models.player import Player
 from app.db.session import get_read_db, get_write_db
 
 
-@pytest.mark.asyncio
 async def test_guest_login_persists_in_db(async_client, get_app, db_session_writer):
     """
     E2E test with real DB validation + isolation for guest login
@@ -22,16 +22,17 @@ async def test_guest_login_persists_in_db(async_client, get_app, db_session_writ
 
         assert response.status_code == 200
 
-        player = db_session_writer.query(Player).filter_by(
-            device_id="device_123"
-        ).first()
+        query = select(Player).where(Player.device_id=="device_123")
+        result = await db_session_writer.execute(query)
+        
+        player = result.scalars().first()
 
         assert player is not None
     finally:
         # revert functions override
         get_app.dependency_overrides.clear()
 
-@pytest.mark.asyncio
+
 async def test_register_persists_in_db(async_client, get_app, db_session_writer):
     """
     E2E test with real DB validation + isolation for register
@@ -53,16 +54,16 @@ async def test_register_persists_in_db(async_client, get_app, db_session_writer)
 
         assert response.status_code == 200
 
-        player = db_session_writer.query(Player).filter_by(
-            email="email@email.com"
-        ).first()
+        query = select(Player).where(Player.email=="email@email.com")
+        result = await db_session_writer.execute(query)
+        player = result.scalars().first()
 
         assert player is not None
     finally:
         # revert functions override
         get_app.dependency_overrides.clear()
 
-@pytest.mark.asyncio
+
 async def test_register_same_email(async_client, get_app, db_session_writer):
     """
     E2E test with real DB multiple times with the same email
@@ -98,7 +99,7 @@ async def test_register_same_email(async_client, get_app, db_session_writer):
         # revert functions override
         get_app.dependency_overrides.clear()
 
-@pytest.mark.asyncio
+
 async def test_auth_full_lifecycle(async_client, get_app, db_session_writer):
     """
     E2E test with full auth lifecycle (login-me-refresh-logout)
@@ -169,7 +170,7 @@ async def test_auth_full_lifecycle(async_client, get_app, db_session_writer):
         # revert functions override
         get_app.dependency_overrides.clear()
 
-@pytest.mark.asyncio
+
 async def test_register_login_sequence(async_client, get_app, db_session_writer):
     """
     E2E test for register + login sequence and refresh token
@@ -224,7 +225,7 @@ async def test_register_login_sequence(async_client, get_app, db_session_writer)
         # revert functions override
         get_app.dependency_overrides.clear()
 
-@pytest.mark.asyncio
+
 async def test_refresh_token_rejected_after_logout(async_client, get_app, db_session_writer):
     """
     E2E test to avoid token reuse after logout
@@ -262,7 +263,7 @@ async def test_refresh_token_rejected_after_logout(async_client, get_app, db_ses
         # revert functions override
         get_app.dependency_overrides.clear()
     
-@pytest.mark.asyncio
+
 async def test_guest_link_login(async_client, get_app, db_session_writer):
     """
     E2E test for guest-link-login final cycle
@@ -309,7 +310,7 @@ async def test_guest_link_login(async_client, get_app, db_session_writer):
         get_app.dependency_overrides.clear()
 
 
-@pytest.mark.asyncio
+
 async def test_guest_login_requires_device_secret(async_client, get_app, db_session_writer):
     """
     E2E test for the device secret: issued once, then required on every later guest login
