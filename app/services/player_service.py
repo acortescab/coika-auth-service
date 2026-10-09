@@ -77,6 +77,12 @@ class PlayerService:
         """
         return await self.repo.get_by_id(player_id)
     
+    async def get_public_players(self, player_ids):
+        """
+        Gets the public profile (id, name) of several players at once.
+        """
+        return await self.repo.get_public_by_ids(list(dict.fromkeys(player_ids)))
+
     async def get_player_by_email(self, email: str):
         """
         Gets player by email

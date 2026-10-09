@@ -6,7 +6,13 @@ from pydantic import EmailStr
 from app.core.exceptions.auth import InvalidCredentials, InvalidRegistration, InvalidToken
 from app.core.security import DUMMY_PASSWORD_HASH, verify_password
 from app.db.models.player import PlayerAccountType
-from app.schemas.auth import GuestLoginResponse, LoginResponse, MeResponse, RegisterResponse
+from app.schemas.auth import (
+    GuestLoginResponse,
+    LoginResponse,
+    MeResponse,
+    PlayerPublicResponse,
+    RegisterResponse,
+)
 from app.services.player_service import PlayerService
 from app.services.token_service import TokenService
 
@@ -81,6 +87,17 @@ class AuthService:
             account_type=player.account_type
         )
     
+    async def lookup_players(self, token: str, player_ids):
+        """
+        Returns the public profile (id, name) of the given players.
+        Any authenticated player may ask: the data is what the game already shows in its rankings.
+        """
+        await self.get_player_by_token(token)
+        players = await self.player_service.get_public_players(player_ids)
+        logger.info("players looked up", extra={"requested": len(player_ids), "found": len(players)})
+
+        return [PlayerPublicResponse(id=player.id, name=player.name) for player in players]
+
     async def logout_player(self, token: str):
         """
         Logouts a player with valid token revoking it

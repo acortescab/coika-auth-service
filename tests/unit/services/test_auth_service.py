@@ -386,6 +386,43 @@ async def test_access_token_for_unknown_player_is_rejected():
     player_service.get_player_by_id.assert_awaited_once_with("player-id")
 
 
+async def test_lookup_players_returns_only_id_and_name():
+    """Other services get the public profile (id, name) of the requested players, nothing else."""
+    first, second = uuid.uuid4(), uuid.uuid4()
+    service, player_service, _ = _auth_service_for(SimpleNamespace(id=uuid.uuid4()))
+    player_service.get_public_players.return_value = [
+        SimpleNamespace(id=first, name="Ana"),
+        SimpleNamespace(id=second, name="Luis"),
+    ]
+
+    result = await service.lookup_players("valid_token", [first, second])
+
+    player_service.get_public_players.assert_awaited_once_with([first, second])
+    assert [(p.id, p.name) for p in result] == [(first, "Ana"), (second, "Luis")]
+    assert set(result[0].model_dump()) == {"id", "name"}
+
+
+async def test_lookup_players_with_invalid_token_does_not_query_players():
+    """Without a valid access token nobody can enumerate player names."""
+    service, player_service, token_service = _auth_service_for(None)
+    token_service.decode_token.side_effect = InvalidToken("Invalid token")
+
+    with pytest.raises(InvalidToken):
+        await service.lookup_players("garbage", [uuid.uuid4()])
+
+    player_service.get_public_players.assert_not_awaited()
+
+
+async def test_lookup_players_for_a_deleted_caller_is_rejected():
+    """A valid token of a player that no longer exists must not be able to look others up."""
+    service, player_service, _ = _auth_service_for(None)
+
+    with pytest.raises(InvalidToken):
+        await service.lookup_players("token_of_deleted_player", [uuid.uuid4()])
+
+    player_service.get_public_players.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "player",
     [

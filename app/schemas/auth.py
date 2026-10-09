@@ -49,6 +49,13 @@ class MeResponse(BaseModel):
     email: str | None = None
     account_type: str
 
+class PlayerPublicResponse(BaseModel):
+    """
+    Public profile of a player: what other services may show to anyone (never email or account data).
+    """
+    id: UUID
+    name: str
+
 # Register schemas
 class RegisterRequest(BaseModel):
     """

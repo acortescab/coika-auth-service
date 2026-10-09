@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
 
-from app.api.v0.routes import auth, health
+from app.api.v0.routes import auth, health, players
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.core.rate_limit import limiter
@@ -51,6 +51,7 @@ def validate_settings(settings):
 app = FastAPI(lifespan=lifespan)
 app.include_router(health.router, prefix="/v0")
 app.include_router(auth.router, prefix="/v0")
+app.include_router(players.router, prefix="/v0")
 setup_telemetry(app, get_settings())
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
