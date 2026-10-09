@@ -1,3 +1,5 @@
+import uuid
+
 from app.repositories.player_repository import PlayerRepository
 
 
@@ -82,3 +84,19 @@ async def test_upgrade_account(db_session_writer, db_session_reader):
     assert player is not None
     assert player.account_type == "registered"
     assert player.id == player.id
+
+async def test_get_public_by_ids_returns_only_id_and_name_of_known_players(db_session_writer, db_session_reader):
+    """
+    Unit test for the public lookup: unknown ids are absent and no private fields are exposed.
+    """
+    # Arrange
+    repo = PlayerRepository(db_session_writer, db_session_reader)
+    first = await repo.create_guest(device_id="device_a", name="guest-a")
+    second = await repo.create_guest(device_id="device_b", name="guest-b")
+
+    # Act
+    rows = await repo.get_public_by_ids([first.id, second.id, uuid.uuid4()])
+
+    # Assert
+    assert {(row.id, row.name) for row in rows} == {(first.id, "guest-a"), (second.id, "guest-b")}
+    assert set(rows[0]._fields) == {"id", "name"}

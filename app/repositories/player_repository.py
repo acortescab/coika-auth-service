@@ -46,6 +46,16 @@ class PlayerRepository:
 
         return result.scalar_one_or_none()
 
+    async def get_public_by_ids(self, player_ids):
+        """
+        Retrieves only the public fields (id, name) of the given players.
+        Unknown ids are simply absent from the result.
+        """
+        query = select(Player.id, Player.name).where(Player.id.in_(player_ids))
+        result = await self.read_db.execute(query)
+
+        return result.all()
+
     async def create_guest(self, device_id: str, name: str, device_secret_hash: str | None = None):
         """
         Creates a new player guest.
