@@ -398,3 +398,15 @@ async def test_revoke_token_by_family_id_delegates_to_the_repository():
     await service.revoke_token_by_family_id("family-1")
 
     repo.revoke_by_family_id.assert_awaited_once_with("family-1")
+
+
+def test_settings_kid_requires_secret_key():
+    """
+    The key id is derived from the signing key, so it cannot be computed without one.
+    """
+    from app.core.config import Settings
+
+    settings = Settings(SECRET_KEY=None, ENV="test")
+
+    with pytest.raises(ValueError, match="SECRET_KEY is not configured"):
+        settings.KID

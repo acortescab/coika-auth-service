@@ -102,3 +102,16 @@ async def test_generate_guest_name_format():
     # Assert
     assert name.startswith("guest-")
     assert len(name) == len("guest-") + 6
+
+async def test_get_public_players_deduplicates_ids_preserving_order():
+    """
+    The repository is queried once with each id a single time, in first-seen order.
+    """
+    repo = cast(PlayerRepository, create_autospec(PlayerRepository))
+    first, second = uuid.uuid4(), uuid.uuid4()
+    repo.get_public_by_ids.return_value = [SimpleNamespace(id=first, name="a"), SimpleNamespace(id=second, name="b")]
+
+    result = await PlayerService(repo).get_public_players([first, second, first])
+
+    assert result == repo.get_public_by_ids.return_value
+    repo.get_public_by_ids.assert_awaited_once_with([first, second])
