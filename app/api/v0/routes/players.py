@@ -5,14 +5,14 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from app.core.exceptions.auth import InvalidToken
 from app.core.security import oauth2_scheme
-from app.dependencies import get_auth_service
-from app.schemas.auth import PlayerLookupRequest, PlayerPublicResponse
-from app.services.auth_service import AuthService
+from app.dependencies import get_lookup_service
+from app.schemas.lookup import PlayerLookupRequest, PlayerPublicResponse
+from app.services.lookup_service import LookupService
 
 # Public profile of players, used by other services (e.g. the game) to show names
 router = APIRouter(prefix="/players", tags=["players"])
 
-AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+LookupServiceDep = Annotated[LookupService, Depends(get_lookup_service)]
 
 
 @router.post("/lookup", response_model=list[PlayerPublicResponse])
@@ -20,7 +20,7 @@ AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 async def lookup_players(
     payload: PlayerLookupRequest,
     token: Annotated[HTTPAuthorizationCredentials, Depends(oauth2_scheme)],
-    service: AuthServiceDep,
+    service: LookupServiceDep,
 ):
     """
     Endpoint to get the public profile (id, name) of several players at once.

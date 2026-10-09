@@ -4,16 +4,16 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.exceptions.auth import InvalidToken
-from app.dependencies import get_auth_service
+from app.dependencies import get_lookup_service
 from app.main import app
-from app.schemas.auth import MAX_LOOKUP_IDS, PlayerPublicResponse
+from app.schemas.lookup import MAX_LOOKUP_IDS, PlayerPublicResponse
 
 URL = "/v0/players/lookup"
 AUTH = {"Authorization": "Bearer some-access-token"}
 
 
-class FakeAuthService:
-    """Stands in for AuthService so the route is tested without a database."""
+class FakeLookupService:
+    """Stands in for LookupService so the route is tested without a database."""
 
     def __init__(self, players=None, error=None):
         self.players = players or []
@@ -30,11 +30,11 @@ class FakeAuthService:
 @pytest.fixture
 def use_service():
     def _use(service):
-        app.dependency_overrides[get_auth_service] = lambda: service
+        app.dependency_overrides[get_lookup_service] = lambda: service
         return service
 
     yield _use
-    app.dependency_overrides.pop(get_auth_service, None)
+    app.dependency_overrides.pop(get_lookup_service, None)
 
 
 async def post(payload, **kwargs):
@@ -45,7 +45,7 @@ async def post(payload, **kwargs):
 
 async def test_lookup_returns_the_public_profile(use_service):
     first, second = uuid.uuid4(), uuid.uuid4()
-    service = use_service(FakeAuthService([
+    service = use_service(FakeLookupService([
         PlayerPublicResponse(id=first, name="Ana"),
         PlayerPublicResponse(id=second, name="Luis"),
     ]))
@@ -63,7 +63,7 @@ async def test_lookup_returns_the_public_profile(use_service):
 async def test_lookup_never_exposes_account_data(use_service):
     """Only id and name leave the auth service."""
     pid = uuid.uuid4()
-    use_service(FakeAuthService([PlayerPublicResponse(id=pid, name="Ana")]))
+    use_service(FakeLookupService([PlayerPublicResponse(id=pid, name="Ana")]))
 
     response = await post({"ids": [str(pid)]}, headers=AUTH)
 
@@ -72,7 +72,7 @@ async def test_lookup_never_exposes_account_data(use_service):
 
 async def test_ids_travel_in_the_body_not_in_the_url(use_service):
     """A GET with the ids in the query string must not exist: it would be a ~4 KB URL."""
-    use_service(FakeAuthService())
+    use_service(FakeLookupService())
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -82,7 +82,7 @@ async def test_ids_travel_in_the_body_not_in_the_url(use_service):
 
 
 async def test_lookup_without_token_is_rejected(use_service):
-    service = use_service(FakeAuthService())
+    service = use_service(FakeLookupService())
 
     response = await post({"ids": [str(uuid.uuid4())]})
 
@@ -91,7 +91,7 @@ async def test_lookup_without_token_is_rejected(use_service):
 
 
 async def test_lookup_with_invalid_token_is_401(use_service):
-    use_service(FakeAuthService(error=InvalidToken("Invalid token")))
+    use_service(FakeLookupService(error=InvalidToken("Invalid token")))
 
     response = await post({"ids": [str(uuid.uuid4())]}, headers=AUTH)
 
@@ -110,7 +110,7 @@ async def test_lookup_with_invalid_token_is_401(use_service):
     ids=["no-ids-field", "empty-list", "invalid-uuid", "more-than-the-maximum"],
 )
 async def test_lookup_validates_the_ids(use_service, payload):
-    service = use_service(FakeAuthService())
+    service = use_service(FakeLookupService())
 
     response = await post(payload, headers=AUTH)
 
@@ -119,7 +119,7 @@ async def test_lookup_validates_the_ids(use_service, payload):
 
 
 async def test_lookup_accepts_exactly_the_maximum_number_of_ids(use_service):
-    service = use_service(FakeAuthService())
+    service = use_service(FakeLookupService())
     ids = [uuid.uuid4() for _ in range(MAX_LOOKUP_IDS)]
 
     response = await post({"ids": [str(i) for i in ids]}, headers=AUTH)
