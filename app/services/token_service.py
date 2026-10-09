@@ -11,6 +11,10 @@ from app.repositories.refresh_token_repository import RefreshTokenRepository
 
 logger = logging.getLogger(__name__)
 
+# Access tokens are issued for the game service; it validates both claims.
+ACCESS_TOKEN_ISSUER = "coika-auth"
+ACCESS_TOKEN_AUDIENCE = "coika-game"
+
 class TokenService:
     """
     Service class for handling token-related operations, such as creating access and refresh tokens. 
@@ -32,10 +36,12 @@ class TokenService:
             "sub": str(player_id),
             "type": "access",
             "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
-            "iat": datetime.now(timezone.utc)
+            "iat": datetime.now(timezone.utc),
+            "iss": ACCESS_TOKEN_ISSUER,
+            "aud": ACCESS_TOKEN_AUDIENCE
         }
 
-        return self.encode_token(payload)
+        return self.encode_token(payload, is_access=True)
     
     async def refresh_token(self, refresh_token: str):
         """
@@ -128,11 +134,14 @@ class TokenService:
 
         return token
 
-    def encode_token(self, payload: dict) -> str:
+    def encode_token(self, payload: dict, is_access: bool = False) -> str:
         """
         Encodes a payload into a JWT token.
         """
-        return jwt.encode(payload, self.settings.SECRET_KEY, algorithm=self.settings.ALGORITHM)
+        if is_access:
+            return jwt.encode(payload, self.settings.SECRET_KEY, algorithm=self.settings.ALGORITHM, headers={"kid": self.settings.KID})
+        else:
+            return jwt.encode(payload, self.settings.SECRET_KEY, algorithm=self.settings.ALGORITHM)
 
     def decode_token(self, token, token_type: str | None = None):
         """
@@ -140,12 +149,20 @@ class TokenService:
         When token_type is given ("access" or "refresh"), the token's type claim must match.
         Raises InvalidToken if the token is expired, malformed or of the wrong type.
         """
+        required = ["exp", "iat", "sub"]
+        claims = {}
+        if token_type == "access":
+            # Access tokens carry iss/aud; without `audience` PyJWT would reject them.
+            required += ["iss", "aud"]
+            claims = {"issuer": ACCESS_TOKEN_ISSUER, "audience": ACCESS_TOKEN_AUDIENCE}
+
         try:
             payload = jwt.decode(
                 token,
                 self.settings.public_key_pem,
                 algorithms=[self.settings.ALGORITHM],
-                options={"require": ["exp", "iat", "sub"]},
+                options={"require": required},
+                **claims,
             )
         except jwt.PyJWTError as e:
             logger.warning("token decode failed", extra={"reason": type(e).__name__, "token_type": token_type})
