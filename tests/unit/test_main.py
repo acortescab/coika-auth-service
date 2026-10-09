@@ -45,6 +45,9 @@ async def test_jwks_endpoint_returns_public_key_set():
     assert key["alg"] == "RS256"
     assert "n" in key
     assert "e" in key
+    assert key["kid"] and key["kid"] != "default"
+    # Only the public part may be published
+    assert not {"d", "p", "q", "dp", "dq", "qi"} & key.keys()
 
 
 @pytest.fixture

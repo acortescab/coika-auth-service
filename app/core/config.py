@@ -1,4 +1,5 @@
 import base64
+import hashlib
 from functools import cached_property, lru_cache
 from pathlib import Path
 
@@ -67,6 +68,23 @@ class Settings(BaseSettings):
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         ).decode("utf-8")
 
+    @cached_property
+    def KID(self) -> str:
+        """
+        Key id shared by the JWT header and the JWKS document.
+        Derived from the public key (first 16 hex chars of the SHA-256 of its DER encoding), so it
+        can never drift from the key that actually signs the tokens and it changes on key rotation.
+        """
+        if not self.SECRET_KEY:
+            raise ValueError("SECRET_KEY is not configured")
+
+        private_key = serialization.load_pem_private_key(self.SECRET_KEY.encode("utf-8"), password=None)
+        der = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        return hashlib.sha256(der).hexdigest()[:16]
+
     @property
     def jwks(self):
         """Build the JWKS document for the configured RSA key pair."""
@@ -81,7 +99,7 @@ class Settings(BaseSettings):
                 {
                     "kty": "RSA",
                     "use": "sig",
-                    "kid": "default",
+                    "kid": self.KID,
                     "alg": self.ALGORITHM,
                     "n": _base64url_encode(public_numbers.n),
                     "e": _base64url_encode(public_numbers.e),
