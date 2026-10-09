@@ -191,7 +191,7 @@ def signing_service():
     repo = cast(RefreshTokenRepository, create_autospec(RefreshTokenRepository))
     service = TokenService(repo)
     service.settings = SimpleNamespace(
-        SECRET_KEY=private_pem, ALGORITHM="RS256", public_key_pem=public_pem
+        SECRET_KEY=private_pem, ALGORITHM="RS256", public_key_pem=public_pem, KID="test-kid"
     )
     return service
 
@@ -234,6 +234,79 @@ async def test_decode_token_rejects_wrong_token_type(signing_service):
 
     with pytest.raises(InvalidToken):
         signing_service.decode_token(access, "refresh")
+
+
+def test_access_token_carries_issuer_audience_and_kid(signing_service):
+    """The game service validates iss/aud and picks the public key by the kid in the header."""
+    import jwt
+
+    token = signing_service.create_access_token(1)
+
+    assert jwt.get_unverified_header(token)["kid"] == "test-kid"
+    claims = jwt.decode(token, options={"verify_signature": False})
+    assert claims["iss"] == "coika-auth"
+    assert claims["aud"] == "coika-game"
+    assert claims["type"] == "access"
+
+
+async def test_refresh_token_has_no_audience_and_still_decodes(signing_service):
+    """Refresh tokens are only for the auth service: no aud/iss, and they still decode."""
+    refresh = await signing_service.create_refresh_token(1)
+
+    assert "aud" not in __import__("jwt").decode(refresh, options={"verify_signature": False})
+    assert signing_service.decode_token(refresh, "refresh")["sub"] == "1"
+
+
+def test_decode_access_token_with_wrong_audience_raises_invalid_token(signing_service):
+    """An access token issued for another service must not be accepted."""
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    token = signing_service.encode_token(
+        {"sub": "1", "type": "access", "iat": now, "exp": now + timedelta(minutes=5),
+         "iss": "coika-auth", "aud": "other-service"},
+        is_access=True,
+    )
+
+    with pytest.raises(InvalidToken):
+        signing_service.decode_token(token, "access")
+
+
+def test_published_jwks_verifies_issued_access_tokens():
+    """
+    End to end for the game service: a token signed here must be verifiable using ONLY the published
+    JWKS, finding the key through the kid in the token header.
+    """
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from app.core.config import Settings
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+
+    settings = Settings(SECRET_KEY=private_pem, ENV="test")
+    service = TokenService(cast(RefreshTokenRepository, create_autospec(RefreshTokenRepository)))
+    service.settings = settings
+
+    token = service.create_access_token(1)
+    jwks = settings.jwks
+
+    kid = jwt.get_unverified_header(token)["kid"]
+    assert kid == jwks["keys"][0]["kid"]
+    assert kid != "default"
+    assert not {"d", "p", "q", "dp", "dq", "qi"} & jwks["keys"][0].keys()
+
+    public_key = jwt.PyJWKSet.from_dict(jwks)[kid].key
+    payload = jwt.decode(
+        token, public_key, algorithms=["RS256"], audience="coika-game", issuer="coika-auth"
+    )
+    assert payload["sub"] == "1"
 
 
 async def test_refresh_token_lost_race_invalidates_family_and_issues_nothing():
