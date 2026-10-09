@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from app.core.exceptions.auth import InvalidCredentials, InvalidRegistration, InvalidToken
 from app.core.rate_limit import limiter
 from app.core.security import oauth2_scheme
-from app.dependencies import get_auth_service, get_player_service, get_token_service
+from app.dependencies import get_auth_service, get_token_service
 from app.schemas.auth import (
     GuestLoginRequest,
     GuestLoginResponse,
@@ -18,7 +18,8 @@ from app.schemas.auth import (
     RegisterRequest,
     RegisterResponse,
 )
-from app.services.auth_service import AuthService, PlayerService, TokenService
+from app.services.auth_service import AuthService
+from app.services.token_service import TokenService
 
 # Authentication routes for the OAuth service
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -26,7 +27,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # Resolve Dependency Injection to get multiple services
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 TokenServiceDep = Annotated[TokenService, Depends(get_token_service)]
-PlayerServiceDep = Annotated[PlayerService, Depends(get_player_service)]
 
 @router.post("/guest-login", response_model=GuestLoginResponse)
 @limiter.limit("20/minute")
