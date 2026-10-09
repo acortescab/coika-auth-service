@@ -12,7 +12,7 @@ flowchart LR
     subgraph App[Application Layer]
         Dependencies[Dependency Providers\napp/dependencies.py]
         Factories[Service Factories\napp/factories.py]
-        Services[Services\nAuthService / PlayerService / TokenService]
+        Services[Services\nAuthService / LookupService / TokenService]
         Schemas[Schemas\napp/schemas]
     end
 

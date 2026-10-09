@@ -183,7 +183,7 @@ class TokenService:
     
     async def commit(self):
         """
-        Commits the pending changes of the writer session, which is shared with PlayerService.
+        Commits the pending changes of the writer session, which is shared with the player repository of AuthService.
         create_refresh_token and the revoke_* methods do not commit on their own.
         """
         await self.repo.commit()

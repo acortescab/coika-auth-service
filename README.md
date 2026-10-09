@@ -28,6 +28,7 @@ This project provides a FastAPI-based identity service with guest login, user re
 - Refresh token support and rotation
 - Logout and token invalidation
 - Account linking for guest users
+- Public player profile lookup (id and name) for other services
 - Health endpoint for service checks
 - Dockerized local development setup
 
@@ -37,6 +38,9 @@ The service is organized around a lightweight layered structure:
 
 - API layer: FastAPI routers under `app/api/v0/routes`
 - Services: core business logic under `app/services`
+  - `AuthService`: guest login, registration, login, account linking, logout and access-token validation
+  - `TokenService`: JWT and refresh-token creation, decoding, rotation and revocation
+  - `LookupService`: read-only public data of players (id and name) for an authenticated caller
 - Repositories: database access logic under `app/repositories`
 - Models: database schema under `app/db/models`
 - Core utilities: security, config, and custom exceptions under `app/core`
@@ -55,7 +59,8 @@ The service is organized around a lightweight layered structure:
 │   │   └── v0/
 │   │       └── routes/
 │   │           ├── auth.py
-│   │           └── health.py
+│   │           ├── health.py
+│   │           └── players.py
 │   ├── core/
 │   │   ├── config.py
 │   │   ├── exceptions/
@@ -211,6 +216,27 @@ The service exposes versioned routes under `/v0`.
 - `GET /v0/auth/me`
 - `POST /v0/auth/logout`
 - `POST /v0/auth/link-account`
+
+### Players
+
+- `POST /v0/players/lookup` (see [Player lookup](#player-lookup))
+
+### Player lookup
+
+Lets other services (e.g. the game) show player names. It requires a valid access token in the
+`Authorization: Bearer` header; any authenticated player may call it.
+
+```http
+POST /v0/players/lookup
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{"ids": ["3fa85f64-5717-4562-b3fc-2c963f66afa6"]}
+```
+
+- The ids travel in the body (POST) instead of the URL: between 1 and 100 UUIDs per request.
+- The response is a list of `{"id", "name"}`. Unknown ids are left out, and no private data (email, account type) is exposed.
+- An invalid token, or one of a player that no longer exists, returns `401`.
 
 ### Guest login
 
