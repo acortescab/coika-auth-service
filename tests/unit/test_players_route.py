@@ -6,8 +6,9 @@ from httpx import ASGITransport, AsyncClient
 from app.core.exceptions.auth import InvalidToken
 from app.dependencies import get_auth_service
 from app.main import app
-from app.schemas.auth import PlayerPublicResponse
+from app.schemas.auth import MAX_LOOKUP_IDS, PlayerPublicResponse
 
+URL = "/v0/players/lookup"
 AUTH = {"Authorization": "Bearer some-access-token"}
 
 
@@ -36,10 +37,10 @@ def use_service():
     app.dependency_overrides.pop(get_auth_service, None)
 
 
-async def get(path, **kwargs):
+async def post(payload, **kwargs):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        return await client.get(path, **kwargs)
+        return await client.post(URL, json=payload, **kwargs)
 
 
 async def test_lookup_returns_the_public_profile(use_service):
@@ -49,7 +50,7 @@ async def test_lookup_returns_the_public_profile(use_service):
         PlayerPublicResponse(id=second, name="Luis"),
     ]))
 
-    response = await get(f"/v0/players?ids={first}&ids={second}", headers=AUTH)
+    response = await post({"ids": [str(first), str(second)]}, headers=AUTH)
 
     assert response.status_code == 200
     assert response.json() == [
@@ -60,19 +61,30 @@ async def test_lookup_returns_the_public_profile(use_service):
 
 
 async def test_lookup_never_exposes_account_data(use_service):
-    """Only id and name leave the auth service, even if the service returned more."""
+    """Only id and name leave the auth service."""
     pid = uuid.uuid4()
     use_service(FakeAuthService([PlayerPublicResponse(id=pid, name="Ana")]))
 
-    response = await get(f"/v0/players?ids={pid}", headers=AUTH)
+    response = await post({"ids": [str(pid)]}, headers=AUTH)
 
     assert set(response.json()[0]) == {"id", "name"}
+
+
+async def test_ids_travel_in_the_body_not_in_the_url(use_service):
+    """A GET with the ids in the query string must not exist: it would be a ~4 KB URL."""
+    use_service(FakeAuthService())
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"{URL}?ids={uuid.uuid4()}", headers=AUTH)
+
+    assert response.status_code == 405
 
 
 async def test_lookup_without_token_is_rejected(use_service):
     service = use_service(FakeAuthService())
 
-    response = await get(f"/v0/players?ids={uuid.uuid4()}")
+    response = await post({"ids": [str(uuid.uuid4())]})
 
     assert response.status_code in (401, 403)
     assert service.calls == []
@@ -81,32 +93,37 @@ async def test_lookup_without_token_is_rejected(use_service):
 async def test_lookup_with_invalid_token_is_401(use_service):
     use_service(FakeAuthService(error=InvalidToken("Invalid token")))
 
-    response = await get(f"/v0/players?ids={uuid.uuid4()}", headers=AUTH)
+    response = await post({"ids": [str(uuid.uuid4())]}, headers=AUTH)
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Invalid token"}
 
 
 @pytest.mark.parametrize(
-    "query",
-    ["", "?ids=not-a-uuid", "?" + "&".join(f"ids={uuid.uuid4()}" for _ in range(101))],
-    ids=["no-ids", "invalid-uuid", "more-than-100-ids"],
+    "payload",
+    [
+        {},
+        {"ids": []},
+        {"ids": ["not-a-uuid"]},
+        {"ids": [str(uuid.uuid4()) for _ in range(MAX_LOOKUP_IDS + 1)]},
+    ],
+    ids=["no-ids-field", "empty-list", "invalid-uuid", "more-than-the-maximum"],
 )
-async def test_lookup_validates_the_ids(use_service, query):
+async def test_lookup_validates_the_ids(use_service, payload):
     service = use_service(FakeAuthService())
 
-    response = await get(f"/v0/players{query}", headers=AUTH)
+    response = await post(payload, headers=AUTH)
 
     assert response.status_code == 422
     assert service.calls == []
 
 
-async def test_lookup_accepts_exactly_100_ids(use_service):
+async def test_lookup_accepts_exactly_the_maximum_number_of_ids(use_service):
     service = use_service(FakeAuthService())
-    ids = [uuid.uuid4() for _ in range(100)]
+    ids = [uuid.uuid4() for _ in range(MAX_LOOKUP_IDS)]
 
-    response = await get("/v0/players?" + "&".join(f"ids={i}" for i in ids), headers=AUTH)
+    response = await post({"ids": [str(i) for i in ids]}, headers=AUTH)
 
     assert response.status_code == 200
     assert response.json() == []
-    assert len(service.calls[0][1]) == 100
+    assert len(service.calls[0][1]) == MAX_LOOKUP_IDS
